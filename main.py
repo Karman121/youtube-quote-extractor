@@ -92,7 +92,7 @@ def process_youtube_url_only(youtube_url: str, progress_callback=None) -> Option
     if progress_callback:
         progress_callback("Complete!")
     
-    return full_transcript, transcript_filename, video_title
+    return full_transcript, transcript_filename, video_title, video_description
 
 
 # =========================

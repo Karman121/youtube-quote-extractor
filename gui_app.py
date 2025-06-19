@@ -462,9 +462,10 @@ class YouTubeExtractorGUI:
         result = process_youtube_url_only(url, progress_callback=self.update_status)
         
         if result:
-            transcript, filename, title = result
+            transcript, filename, title, video_description = result
             self.current_transcript = transcript
             self.current_video_title = title
+            self.current_video_description = video_description
             
             # Update GUI
             self.root.after(0, lambda: self.transcript_text.delete('1.0', 'end'))
@@ -480,9 +481,10 @@ class YouTubeExtractorGUI:
         if not result:
             return
             
-        transcript, filename, title = result
+        transcript, filename, title, video_description = result
         self.current_transcript = transcript
         self.current_video_title = title
+        self.current_video_description = video_description
         
         # Update transcript display
         self.root.after(0, lambda: self.transcript_text.delete('1.0', 'end'))
@@ -507,7 +509,7 @@ class YouTubeExtractorGUI:
             transcript, 
             self.context_after.get(), 
             self.context_before.get(), 
-            ""  # video_description placeholder
+            video_description  # Now passing actual video description
         )
         
         # Update quotes display

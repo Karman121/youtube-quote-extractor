@@ -19,13 +19,7 @@ from io import StringIO
 # Add the current directory to the path so we can import our modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import DEFAULT_SETTINGS, QUOTE_EXTRACTION_INSTRUCTIONS, TRANSCRIPTION_PROMPT
-from main import (
-    validate_url, validate_timestamps_format, parse_input,
-    process_youtube_url_only, process_timestamps
-)
-
-# Global log capture - Initialize properly for web GUI
+# Global log capture - Set up BEFORE importing other modules
 log_capture_string = StringIO()
 
 # Create a custom handler that writes to both console and our string buffer
@@ -39,7 +33,7 @@ class DualHandler(logging.Handler):
         self.string_io.write(msg + '\n')
         print(msg)  # Also print to console
 
-# Set up the dual logging handler
+# Set up the dual logging handler BEFORE importing other modules
 dual_handler = DualHandler(log_capture_string)
 dual_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
@@ -48,6 +42,13 @@ root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 root_logger.handlers.clear()  # Clear existing handlers
 root_logger.addHandler(dual_handler)
+
+# Now import our modules - they will use the logging configuration we just set up
+from config import DEFAULT_SETTINGS, QUOTE_EXTRACTION_INSTRUCTIONS, TRANSCRIPTION_PROMPT
+from main import (
+    validate_url, validate_timestamps_format, parse_input,
+    process_youtube_url_only, process_timestamps
+)
 
 logger = logging.getLogger(__name__)
 
@@ -653,7 +654,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         
         function startLogUpdates() {
             refreshLogs();
-            logUpdateInterval = setInterval(refreshLogs, 2000);
+            logUpdateInterval = setInterval(refreshLogs, 1000); // Update every second during processing
         }
         
         function stopLogUpdates() {
@@ -760,12 +761,10 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             
             document.getElementById('process-btn').disabled = true;
             document.getElementById('stop-btn').disabled = false;
-            document.getElementById('status').textContent = 'Starting processing...';
+            document.getElementById('status').textContent = 'Processing...';
             
-            // Switch to logs tab if not already there
-            if (currentMainTab !== 'logs') {
-                showMainTab('logs');
-            }
+            // Switch to logs tab automatically to show progress
+            showMainTab('logs');
             
             const data = {
                 url: url,
@@ -897,7 +896,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         
         # Parse logs into structured format
         logs = []
-        for line in log_lines[-50:]:  # Last 50 log entries
+        for line in log_lines[-100:]:  # Last 100 log entries
             if line.strip():
                 try:
                     # Parse log format: timestamp - level - message
@@ -948,12 +947,13 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             log_capture_string.seek(0)
             
             # Log start of processing
-            logging.info(f"Starting processing for URL: {url}")
-            logging.info(f"Mode: {mode}")
+            logger.info("🚀 Starting YouTube Quote Extractor")
+            logger.info(f"📺 Processing URL: {url}")
+            logger.info(f"⚙️ Mode: {mode}")
             
             # Validate URL
             if not validate_url(url):
-                logging.error("Invalid YouTube URL provided")
+                logger.error("❌ Invalid YouTube URL provided")
                 self.send_json_response({'success': False, 'error': 'Invalid YouTube URL'})
                 return
             
@@ -961,34 +961,37 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             self.app_state['status'] = 'Processing...'
             
             # Process video
-            logging.info("Downloading and processing video...")
+            logger.info("🎵 Downloading and processing video...")
             result = process_youtube_url_only(url)
             if not result:
-                logging.error("Failed to process video")
+                logger.error("❌ Failed to process video")
                 self.send_json_response({'success': False, 'error': 'Failed to process video'})
                 return
                 
-            transcript, _, video_title = result
+            transcript, _, video_title, video_description = result
             self.app_state['transcript'] = transcript
             self.app_state['video_title'] = video_title
             
-            logging.info(f"Successfully processed video: {video_title}")
+            logger.info(f"✅ Successfully processed video: {video_title}")
+            logger.info(f"📄 Video description: {video_description[:100]}..." if video_description else "📄 No video description available")
             
             quotes = []
             if mode == 'both' and timestamps:
-                logging.info("Starting quote extraction...")
+                logger.info("💬 Starting quote extraction...")
                 # Format the input properly for parse_input function
                 formatted_input = f"{url}\n{timestamps}"
                 _, timestamps_to_process = parse_input(formatted_input)
                 if timestamps_to_process and validate_timestamps_format(timestamps_to_process):
-                    quotes = process_timestamps(timestamps_to_process, transcript, context_after, context_before, "")
-                    logging.info(f"Extracted {len(quotes)} quotes")
+                    quotes = process_timestamps(timestamps_to_process, transcript, context_after, context_before, video_description)
+                    logger.info(f"✅ Extracted {len(quotes)} quotes successfully")
                 else:
-                    logging.warning("Invalid timestamp format provided")
+                    logger.warning("⚠️ Invalid timestamp format provided")
             
             self.app_state['quotes'] = quotes
             self.app_state['processing'] = False
             self.app_state['status'] = 'Completed'
+            
+            logger.info("🎉 Processing completed successfully!")
             
             response_data = {
                 'transcript': transcript,
@@ -999,7 +1002,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({'success': True, 'data': response_data})
             
         except Exception as e:
-            logging.error(f"Error processing request: {str(e)}")
+            logger.error(f"❌ Error processing request: {str(e)}")
             self.app_state['processing'] = False
             self.app_state['status'] = f'Error: {str(e)}'
             self.send_json_response({'success': False, 'error': str(e)})
@@ -1014,9 +1017,11 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             self.app_state['transcription_prompt'] = data.get('transcription_prompt', TRANSCRIPTION_PROMPT)
             self.app_state['quote_instructions'] = data.get('quote_instructions', QUOTE_EXTRACTION_INSTRUCTIONS.copy())
             
+            logger.info("⚙️ Advanced settings updated successfully")
             self.send_json_response({'success': True})
             
         except Exception as e:
+            logger.error(f"❌ Error updating settings: {str(e)}")
             self.send_json_response({'success': False, 'error': str(e)})
 
     def handle_clear_request(self):
@@ -1031,9 +1036,11 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             log_capture_string.truncate(0)
             log_capture_string.seek(0)
             
+            logger.info("🗑️ Cleared all data and logs")
             self.send_json_response({'success': True})
             
         except Exception as e:
+            logger.error(f"❌ Error clearing data: {str(e)}")
             self.send_json_response({'success': False, 'error': str(e)})
 
     def send_json_response(self, data):
