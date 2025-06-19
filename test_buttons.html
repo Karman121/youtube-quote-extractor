@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Button Test</title>
+</head>
+<body>
+    <h1>JavaScript Button Test</h1>
+    <button onclick="alert('Direct onclick works!')">Direct Alert</button>
+    <button onclick="testFunction()">Function Alert</button>
+    <button id="test-btn">Event Listener Button</button>
+    
+    <script>
+        console.log('JavaScript is loading...');
+        
+        function testFunction() {
+            alert('Function works!');
+            console.log('Function called successfully');
+        }
+        
+        document.getElementById('test-btn').addEventListener('click', function() {
+            alert('Event listener works!');
+            console.log('Event listener called');
+        });
+        
+        console.log('JavaScript loaded successfully');
+    </script>
+</body>
+</html> 

@@ -16,7 +16,7 @@ DEFAULT_SETTINGS = {
     "default_context_before_seconds": 30,
     
     # API settings
-    "gemini_model": "gemini-2.5-flash-preview-05-20",
+    "gemini_model": "gemini-2.5-flash",
     "retry_attempts": 3,
     "rate_limit_calls": 1.8,
     "rate_limit_period": 1,

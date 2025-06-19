@@ -1,0 +1,1006 @@
+#!/usr/bin/env python3
+"""
+Web GUI for YouTube Quote Extractor
+A modern web interface for extracting quotes from YouTube videos
+"""
+
+import os
+import sys
+import json
+import logging
+import threading
+import time
+import webbrowser
+import http.server
+import socketserver
+from datetime import datetime
+from io import StringIO
+
+# Add the current directory to the path so we can import our modules
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from config import DEFAULT_SETTINGS, QUOTE_EXTRACTION_INSTRUCTIONS, TRANSCRIPTION_PROMPT
+from main import (
+    validate_url, validate_timestamps_format, parse_input,
+    process_youtube_url_only, process_timestamps
+)
+
+# Global log capture
+log_capture_string = StringIO()
+log_handler = logging.StreamHandler(log_capture_string)
+log_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, handlers=[log_handler])
+logger = logging.getLogger(__name__)
+
+class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        self.app_state = {
+            'processing': False,
+            'status': 'Ready',
+            'transcript': '',
+            'quotes': [],
+            'video_title': '',
+            'gemini_model': DEFAULT_SETTINGS['gemini_model'],
+            'transcription_prompt': TRANSCRIPTION_PROMPT,
+            'quote_instructions': QUOTE_EXTRACTION_INSTRUCTIONS.copy()
+        }
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.serve_main_page()
+        elif self.path == '/api/status':
+            self.serve_status()
+        elif self.path == '/api/results':
+            self.serve_results()
+        elif self.path == '/api/logs':
+            self.serve_logs()
+        elif self.path == '/api/settings':
+            self.serve_settings()
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        if self.path == '/api/process':
+            self.handle_process_request()
+        elif self.path == '/api/update_settings':
+            self.handle_update_settings()
+        elif self.path == '/api/clear':
+            self.handle_clear_request()
+        else:
+            self.send_error(404)
+
+    def serve_main_page(self):
+        html_content = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Quote Extractor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .main-tabs {
+            display: flex;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px 10px 0 0;
+            overflow: hidden;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            background: transparent;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .tab:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .tab.active {
+            background: white;
+            color: #333;
+        }
+
+        .tab-content {
+            background: white;
+            border-radius: 0 0 15px 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+        }
+
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: normal;
+        }
+
+        .context-settings {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .context-settings input {
+            text-align: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #5a6268;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #c82333;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .results {
+            margin-top: 30px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+        }
+
+        .result-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .result-tab {
+            padding: 10px 20px;
+            background: #e9ecef;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .result-tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .result-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            line-height: 1.6;
+        }
+
+        .download-buttons {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .advanced-section {
+            margin-bottom: 30px;
+        }
+
+        .advanced-section h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .logs-container {
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 500px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }
+
+        .log-timestamp {
+            color: #888;
+        }
+
+        .log-level-INFO {
+            color: #00ff00;
+        }
+
+        .log-level-WARNING {
+            color: #ffaa00;
+        }
+
+        .log-level-ERROR {
+            color: #ff0000;
+        }
+
+        .log-level-DEBUG {
+            color: #00aaff;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .context-settings {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .result-tabs {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 YouTube Quote Extractor</h1>
+            <p>Extract transcripts and quotes from YouTube videos with AI</p>
+        </div>
+
+        <div class="main-tabs">
+            <button class="tab active" onclick="showMainTab('main')">Main</button>
+            <button class="tab" onclick="showMainTab('advanced')">Advanced Settings</button>
+            <button class="tab" onclick="showMainTab('logs')">Live Logs</button>
+        </div>
+
+        <!-- Main Tab -->
+        <div id="main-tab" class="tab-content active">
+            <div class="form-group">
+                <label for="url">YouTube URL:</label>
+                <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=..." required>
+            </div>
+
+            <div class="form-group">
+                <label>Processing Mode:</label>
+                <div class="radio-group">
+                    <label>
+                        <input type="radio" name="mode" value="transcript" checked>
+                        Transcript Only
+                    </label>
+                    <label>
+                        <input type="radio" name="mode" value="both">
+                        Transcript + Quotes
+                    </label>
+                </div>
+            </div>
+
+            <div id="quote-settings" class="hidden">
+                <div class="form-group">
+                    <label>Quote Context Settings:</label>
+                    <div class="context-settings">
+                        <div>
+                            <label for="context-before">Seconds Before:</label>
+                            <input type="number" id="context-before" value="30" min="0" max="300">
+                        </div>
+                        <div>
+                            <label for="context-after">Seconds After:</label>
+                            <input type="number" id="context-after" value="60" min="0" max="300">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="timestamps-section" class="form-group hidden">
+                <label for="timestamps">Timestamps (one per line):</label>
+                <textarea id="timestamps" placeholder="1:23&#10;2:45&#10;5:12"></textarea>
+            </div>
+
+            <div class="button-group">
+                <button id="process-btn" class="btn btn-primary" onclick="startProcessing()">
+                    🚀 Start Processing
+                </button>
+                <button id="stop-btn" class="btn btn-secondary" onclick="stopProcessing()" disabled>
+                    ⏹️ Stop
+                </button>
+                <button class="btn btn-danger" onclick="clearAll()">
+                    🗑️ Clear All
+                </button>
+            </div>
+
+            <div id="results" class="results hidden">
+                <div class="result-tabs">
+                    <button class="result-tab active" onclick="showResultTab('transcript')">Transcript</button>
+                    <button id="quotes-tab" class="result-tab" onclick="showResultTab('quotes')" style="display: none;">Quotes</button>
+                </div>
+                <div id="result-content" class="result-content"></div>
+                <div class="download-buttons">
+                    <button class="btn btn-primary" onclick="downloadResult('transcript')">📥 Download Transcript</button>
+                    <button id="download-quotes-btn" class="btn btn-primary" onclick="downloadResult('quotes')" style="display: none;">📥 Download Quotes</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Advanced Settings Tab -->
+        <div id="advanced-tab" class="tab-content">
+            <div class="advanced-section">
+                <h3>🤖 AI Model Settings</h3>
+                <div class="form-group">
+                    <label for="gemini-model">Gemini Model:</label>
+                    <select id="gemini-model">
+                        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
+                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                        <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B</option>
+                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                        <option value="gemini-1.0-pro">Gemini 1.0 Pro</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="advanced-section">
+                <h3>📝 Transcription Settings</h3>
+                <div class="form-group">
+                    <label for="transcription-prompt">Transcription Prompt:</label>
+                    <textarea id="transcription-prompt" rows="4"></textarea>
+                </div>
+            </div>
+
+            <div class="advanced-section">
+                <h3>💬 Quote Extraction Instructions</h3>
+                <div class="form-group">
+                    <label for="quote-instructions">Instructions (one per line):</label>
+                    <textarea id="quote-instructions" rows="12"></textarea>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="saveAdvancedSettings()">💾 Save Settings</button>
+                <button class="btn btn-secondary" onclick="resetAdvancedSettings()">🔄 Reset to Defaults</button>
+            </div>
+        </div>
+
+        <!-- Live Logs Tab -->
+        <div id="logs-tab" class="tab-content">
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="refreshLogs()">🔄 Refresh</button>
+            </div>
+            <div id="logs-container" class="logs-container">
+                <div class="log-entry">Logs will appear here during processing...</div>
+            </div>
+        </div>
+        
+        <div class="status" id="status">Ready</div>
+    </div>
+
+    <script>
+        let currentResults = { transcript: '', quotes: [], video_title: '' };
+        let currentTab = 'transcript';
+        let currentMainTab = 'main';
+        let logUpdateInterval;
+        
+        // Initialize advanced settings after a short delay
+        setTimeout(function() {
+            loadAdvancedSettings();
+        }, 100);
+        
+        // Toggle quote settings based on mode
+        document.querySelectorAll('input[name="mode"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const quoteSettings = document.getElementById('quote-settings');
+                const timestampsSection = document.getElementById('timestamps-section');
+                if (this.value === 'transcript') {
+                    quoteSettings.classList.add('hidden');
+                    timestampsSection.classList.add('hidden');
+                } else {
+                    quoteSettings.classList.remove('hidden');
+                    timestampsSection.classList.remove('hidden');
+                }
+            });
+        });
+        
+        function showMainTab(tab) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tabBtn => {
+                tabBtn.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(tab + '-tab').classList.add('active');
+            
+            // Add active class to clicked tab
+            document.querySelector('[onclick="showMainTab(\\'' + tab + '\\')"]').classList.add('active');
+            
+            currentMainTab = tab;
+            
+            // Start log updates if logs tab is active
+            if (tab === 'logs') {
+                startLogUpdates();
+            } else {
+                stopLogUpdates();
+            }
+        }
+        
+        function startLogUpdates() {
+            refreshLogs();
+            logUpdateInterval = setInterval(refreshLogs, 2000);
+        }
+        
+        function stopLogUpdates() {
+            if (logUpdateInterval) {
+                clearInterval(logUpdateInterval);
+                logUpdateInterval = null;
+            }
+        }
+        
+        function refreshLogs() {
+            fetch('/api/logs')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('logs-container');
+                    container.innerHTML = '';
+                    
+                    if (data.logs && data.logs.length > 0) {
+                        data.logs.forEach(log => {
+                            const logEntry = document.createElement('div');
+                            logEntry.className = 'log-entry';
+                            logEntry.innerHTML = '<span class="log-timestamp">' + log.timestamp + '</span> <span class="log-level-' + log.level + '">[' + log.level + ']</span> ' + log.message;
+                            container.appendChild(logEntry);
+                        });
+                        container.scrollTop = container.scrollHeight;
+                    } else {
+                        container.innerHTML = '<div class="log-entry">No logs available...</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching logs:', error);
+                });
+        }
+        
+        function loadAdvancedSettings() {
+            fetch('/api/settings')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('gemini-model').value = data.gemini_model;
+                    document.getElementById('transcription-prompt').value = data.transcription_prompt;
+                    
+                    // Load quote instructions as text
+                    document.getElementById('quote-instructions').value = data.quote_instructions.join('\\n');
+                })
+                .catch(error => {
+                    console.error('Error loading settings:', error);
+                });
+        }
+        
+        function saveAdvancedSettings() {
+            const geminiModel = document.getElementById('gemini-model').value;
+            const transcriptionPrompt = document.getElementById('transcription-prompt').value;
+            const quoteInstructionsText = document.getElementById('quote-instructions').value;
+            
+            // Split by lines and filter out empty lines
+            const instructions = quoteInstructionsText.split('\\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+            
+            const settings = {
+                gemini_model: geminiModel,
+                transcription_prompt: transcriptionPrompt,
+                quote_instructions: instructions
+            };
+            
+            fetch('/api/update_settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            }).then(response => response.json())
+              .then(result => {
+                  if (result.success) {
+                      alert('✅ Settings saved successfully!');
+                  } else {
+                      alert('❌ Error saving settings: ' + result.error);
+                  }
+              }).catch(error => {
+                  alert('❌ Error: ' + error);
+              });
+        }
+        
+        function resetAdvancedSettings() {
+            if (confirm('Are you sure you want to reset all settings to defaults?')) {
+                loadAdvancedSettings();
+                alert('✅ Settings reset to defaults!');
+            }
+        }
+        
+        function startProcessing() {
+            const url = document.getElementById('url').value.trim();
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            const timestamps = document.getElementById('timestamps').value.trim();
+            const contextBefore = document.getElementById('context-before').value;
+            const contextAfter = document.getElementById('context-after').value;
+            
+            if (!url) {
+                alert('Please enter a YouTube URL!');
+                return;
+            }
+            
+            if (mode === 'both' && !timestamps) {
+                alert('Please enter timestamps for quote extraction!');
+                return;
+            }
+            
+            document.getElementById('process-btn').disabled = true;
+            document.getElementById('stop-btn').disabled = false;
+            document.getElementById('status').textContent = 'Starting processing...';
+            
+            // Switch to logs tab if not already there
+            if (currentMainTab !== 'logs') {
+                showMainTab('logs');
+            }
+            
+            const data = {
+                url: url,
+                mode: mode,
+                timestamps: timestamps,
+                context_before: parseInt(contextBefore),
+                context_after: parseInt(contextAfter)
+            };
+            
+            fetch('/api/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).then(response => response.json())
+              .then(result => {
+                  if (result.success) {
+                      currentResults = result.data;
+                      showResults();
+                      document.getElementById('status').textContent = 'Processing completed successfully!';
+                      // Switch back to main tab to show results
+                      showMainTab('main');
+                  } else {
+                      alert('Error: ' + result.error);
+                      document.getElementById('status').textContent = 'Error: ' + result.error;
+                  }
+                  processingComplete();
+              }).catch(error => {
+                  alert('Error: ' + error);
+                  document.getElementById('status').textContent = 'Error: ' + error;
+                  processingComplete();
+              });
+        }
+        
+        function stopProcessing() {
+            fetch('/api/clear', { method: 'POST' });
+            processingComplete();
+            document.getElementById('status').textContent = 'Processing stopped';
+        }
+        
+        function processingComplete() {
+            document.getElementById('process-btn').disabled = false;
+            document.getElementById('stop-btn').disabled = true;
+        }
+        
+        function clearAll() {
+            document.getElementById('url').value = '';
+            document.getElementById('timestamps').value = '';
+            document.getElementById('results').classList.add('hidden');
+            currentResults = { transcript: '', quotes: [], video_title: '' };
+            document.getElementById('status').textContent = 'Cleared all fields';
+        }
+        
+        function showResults() {
+            document.getElementById('results').classList.remove('hidden');
+            document.getElementById('quotes-tab').style.display = currentResults.quotes.length > 0 ? 'block' : 'none';
+            document.getElementById('download-quotes-btn').style.display = currentResults.quotes.length > 0 ? 'inline-block' : 'none';
+            showResultTab('transcript');
+        }
+        
+        function showResultTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.result-tab').forEach(t => t.classList.remove('active'));
+            document.querySelector('[onclick="showResultTab(\\'' + tab + '\\')"]').classList.add('active');
+            
+            const content = document.getElementById('result-content');
+            if (tab === 'transcript') {
+                content.textContent = currentResults.transcript || 'No transcript available';
+            } else {
+                content.textContent = currentResults.quotes.join('\\n\\n') || 'No quotes available';
+            }
+        }
+        
+        function downloadResult(type) {
+            let content, filename;
+            if (type === 'transcript') {
+                content = currentResults.transcript;
+                filename = (currentResults.video_title || 'transcript') + '_transcript.txt';
+            } else {
+                content = currentResults.quotes.join('\\n\\n');
+                filename = (currentResults.video_title || 'quotes') + '_quotes.txt';
+            }
+            
+            if (!content) {
+                alert('No content to download!');
+                return;
+            }
+            
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            stopLogUpdates();
+        });
+    </script>
+</body>
+</html>
+        """
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(html_content.encode())
+
+    def serve_status(self):
+        response = {'status': self.app_state['status'], 'processing': self.app_state['processing']}
+        self.send_json_response(response)
+
+    def serve_results(self):
+        response = {
+            'transcript': self.app_state['transcript'],
+            'quotes': self.app_state['quotes'],
+            'video_title': self.app_state['video_title']
+        }
+        self.send_json_response(response)
+
+    def serve_logs(self):
+        # Get recent logs from the log capture
+        log_contents = log_capture_string.getvalue()
+        log_lines = log_contents.strip().split('\n') if log_contents.strip() else []
+        
+        # Parse logs into structured format
+        logs = []
+        for line in log_lines[-50:]:  # Last 50 log entries
+            if line.strip():
+                try:
+                    # Parse log format: timestamp - level - message
+                    parts = line.split(' - ', 2)
+                    if len(parts) >= 3:
+                        logs.append({
+                            'timestamp': parts[0],
+                            'level': parts[1],
+                            'message': parts[2]
+                        })
+                    else:
+                        logs.append({
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'level': 'INFO',
+                            'message': line
+                        })
+                except:
+                    logs.append({
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'level': 'INFO',
+                        'message': line
+                    })
+        
+        self.send_json_response({'logs': logs})
+
+    def serve_settings(self):
+        response = {
+            'gemini_model': self.app_state['gemini_model'],
+            'transcription_prompt': self.app_state['transcription_prompt'],
+            'quote_instructions': self.app_state['quote_instructions']
+        }
+        self.send_json_response(response)
+
+    def handle_process_request(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            url = data['url']
+            mode = data['mode']
+            timestamps = data.get('timestamps', '')
+            context_before = data.get('context_before', 30)
+            context_after = data.get('context_after', 60)
+            
+            # Clear previous logs
+            log_capture_string.truncate(0)
+            log_capture_string.seek(0)
+            
+            # Log start of processing
+            logging.info(f"Starting processing for URL: {url}")
+            logging.info(f"Mode: {mode}")
+            
+            # Validate URL
+            if not validate_url(url):
+                logging.error("Invalid YouTube URL provided")
+                self.send_json_response({'success': False, 'error': 'Invalid YouTube URL'})
+                return
+            
+            self.app_state['processing'] = True
+            self.app_state['status'] = 'Processing...'
+            
+            # Process video
+            logging.info("Downloading and processing video...")
+            result = process_youtube_url_only(url)
+            if not result:
+                logging.error("Failed to process video")
+                self.send_json_response({'success': False, 'error': 'Failed to process video'})
+                return
+                
+            transcript, _, video_title = result
+            self.app_state['transcript'] = transcript
+            self.app_state['video_title'] = video_title
+            
+            logging.info(f"Successfully processed video: {video_title}")
+            
+            quotes = []
+            if mode == 'both' and timestamps:
+                logging.info("Starting quote extraction...")
+                # Format the input properly for parse_input function
+                formatted_input = f"{url}\n{timestamps}"
+                _, timestamps_to_process = parse_input(formatted_input)
+                if timestamps_to_process and validate_timestamps_format(timestamps_to_process):
+                    quotes = process_timestamps(timestamps_to_process, transcript, context_after, context_before, "")
+                    logging.info(f"Extracted {len(quotes)} quotes")
+                else:
+                    logging.warning("Invalid timestamp format provided")
+            
+            self.app_state['quotes'] = quotes
+            self.app_state['processing'] = False
+            self.app_state['status'] = 'Completed'
+            
+            response_data = {
+                'transcript': transcript,
+                'quotes': quotes,
+                'video_title': video_title
+            }
+            
+            self.send_json_response({'success': True, 'data': response_data})
+            
+        except Exception as e:
+            logging.error(f"Error processing request: {str(e)}")
+            self.app_state['processing'] = False
+            self.app_state['status'] = f'Error: {str(e)}'
+            self.send_json_response({'success': False, 'error': str(e)})
+
+    def handle_update_settings(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            self.app_state['gemini_model'] = data.get('gemini_model', DEFAULT_SETTINGS['gemini_model'])
+            self.app_state['transcription_prompt'] = data.get('transcription_prompt', TRANSCRIPTION_PROMPT)
+            self.app_state['quote_instructions'] = data.get('quote_instructions', QUOTE_EXTRACTION_INSTRUCTIONS.copy())
+            
+            self.send_json_response({'success': True})
+            
+        except Exception as e:
+            self.send_json_response({'success': False, 'error': str(e)})
+
+    def handle_clear_request(self):
+        try:
+            self.app_state['processing'] = False
+            self.app_state['status'] = 'Cleared'
+            self.app_state['transcript'] = ''
+            self.app_state['quotes'] = []
+            self.app_state['video_title'] = ''
+            
+            # Clear logs
+            log_capture_string.truncate(0)
+            log_capture_string.seek(0)
+            
+            self.send_json_response({'success': True})
+            
+        except Exception as e:
+            self.send_json_response({'success': False, 'error': str(e)})
+
+    def send_json_response(self, data):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+def start_web_gui(port=8080):
+    """Start the web GUI server"""
+    try:
+        with socketserver.TCPServer(("", port), YouTubeExtractorHandler) as httpd:
+            print(f"🌐 Web GUI running at http://localhost:{port}")
+            print("📱 Opening in your default browser...")
+            
+            # Open browser after a short delay
+            def open_browser():
+                time.sleep(1.5)
+                webbrowser.open(f'http://localhost:{port}')
+            
+            threading.Thread(target=open_browser, daemon=True).start()
+            
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                print("\n👋 Shutting down web server...")
+                httpd.shutdown()
+                
+    except OSError as e:
+        if e.errno == 48:  # Address already in use
+            print(f"❌ Port {port} is already in use. Try a different port.")
+            print(f"   Example: python {__file__} --port 8081")
+        else:
+            print(f"❌ Error starting server: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        sys.exit(1)
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='YouTube Quote Extractor Web GUI')
+    parser.add_argument('--port', type=int, default=8080, help='Port to run the web server on (default: 8080)')
+    
+    args = parser.parse_args()
+    start_web_gui(args.port)
+
+if __name__ == "__main__":
+    main() 

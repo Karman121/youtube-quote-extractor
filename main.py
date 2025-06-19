@@ -4,7 +4,7 @@
 import logging
 import os
 import re
-from typing import List
+from typing import List, Optional
 from transcript_utils import (
     parse_input, parse_timestamp_to_seconds, get_transcript_segment,
     transcribe_audio_with_chunking, TimestampInfo, sanitize_filename
@@ -26,12 +26,77 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =========================
-# Data Classes
+# Core Business Logic Functions (for GUI integration)
 # =========================
+
+def validate_url(youtube_url: str) -> bool:
+    """Validate YouTube URL only."""
+    if not youtube_url:
+        logger.error("No YouTube URL provided.")
+        return False
+    return True
+
+
+def validate_timestamps_format(timestamps_to_process: List[TimestampInfo]) -> bool:
+    """Validate timestamp formats only."""
+    for ts_info in timestamps_to_process:
+        if not re.match(r'^(\d{1,2}:\d{2})(?::\d{2})?$', ts_info.timestamp):
+            logger.error(f"Invalid timestamp format: {ts_info.timestamp}")
+            return False
+    return True
+
+
+def validate_input(youtube_url, timestamps_to_process):
+    """Validate the parsed input."""
+    if not youtube_url:
+        print(f"[ERROR] {ERROR_MESSAGES['no_url']}")
+        logger.error("No YouTube URL found in input.")
+        return False
+    
+    if not timestamps_to_process:
+        print(f"[ERROR] {ERROR_MESSAGES['no_timestamps']}")
+        logger.error("No timestamps found in input.")
+        return False
+    
+    # Validate timestamp formats
+    if not validate_timestamps_format(timestamps_to_process):
+        return False
+    
+    return True
+
+
+def process_youtube_url_only(youtube_url: str, progress_callback=None) -> Optional[tuple]:
+    """Process YouTube URL for transcript-only mode."""
+    if progress_callback:
+        progress_callback("Validating URL...")
+    
+    if not validate_url(youtube_url):
+        return None
+    
+    if progress_callback:
+        progress_callback("Downloading audio...")
+    
+    download_result = download_and_prepare_audio(youtube_url)
+    if not download_result:
+        return None
+    
+    audio_file_path, video_title, video_description = download_result
+    
+    if progress_callback:
+        progress_callback("Generating transcript...")
+    
+    full_transcript, transcript_filename = get_or_create_transcript(audio_file_path, video_title)
+    if not full_transcript:
+        return None
+    
+    if progress_callback:
+        progress_callback("Complete!")
+    
+    return full_transcript, transcript_filename, video_title
 
 
 # =========================
-# Utility Functions
+# Original CLI Functions
 # =========================
 
 def extract_timestamps_and_descriptions(text: str) -> List[TimestampInfo]:
@@ -121,29 +186,6 @@ def get_context_settings():
     except Exception:
         print(f"[ERROR] {ERROR_MESSAGES['invalid_context']}")
         raise ValueError(ERROR_MESSAGES["invalid_context"])
-
-
-def validate_input(youtube_url, timestamps_to_process):
-    """Validate the parsed input."""
-    if not youtube_url:
-        print(f"[ERROR] {ERROR_MESSAGES['no_url']}")
-        logger.error("No YouTube URL found in input.")
-        return False
-    
-    if not timestamps_to_process:
-        print(f"[ERROR] {ERROR_MESSAGES['no_timestamps']}")
-        logger.error("No timestamps found in input.")
-        return False
-    
-    # Validate timestamp formats
-    for ts_info in timestamps_to_process:
-        if not re.match(r'^(\d{1,2}:\d{2})(?::\d{2})?$', ts_info.timestamp):
-            error_msg = ERROR_MESSAGES["invalid_timestamp"].format(ts_info.timestamp)
-            print(f"[ERROR] {error_msg}")
-            logger.error(f"Invalid timestamp format: {ts_info.timestamp}")
-            return False
-    
-    return True
 
 
 def download_and_prepare_audio(youtube_url):

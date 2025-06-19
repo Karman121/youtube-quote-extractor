@@ -7,4 +7,5 @@ python-dotenv>=1.0.0
 tenacity>=8.0.0
 urllib3<2.0.0  # To avoid OpenSSL warning
 pydub>=0.25.1
-ratelimit>=2.2.1 
+ratelimit>=2.2.1
+ttkbootstrap>=1.10.1 
