@@ -1,52 +1,37 @@
 #!/usr/bin/env python3
 """
-YouTube Quote Extractor - Launcher
-Choose between CLI and Web GUI interfaces.
+YouTube Quote Extractor - Main Launcher
+Professional tool for extracting quotes and transcripts from YouTube videos
 """
 
 import sys
 
 
 def main():
-    """Main launcher function."""
+    print("=" * 60)
     print("🎬 YouTube Quote Extractor")
-    print("=" * 40)
-    print("Choose your interface:")
-    print("1. 💻 Command Line Interface (CLI)")
-    print("2. 🌐 Web Browser Interface (Recommended)")
-    print("3. ❌ Exit")
+    print("   Professional AI-Powered Quote & Transcript Tool")
+    print("=" * 60)
     print()
+    print("🌐 Starting Web Interface...")
+    print("This will open in your web browser automatically.")
+    print("Close this window to stop the application.")
+    print("-" * 50)
     
-    while True:
-        try:
-            choice = input("Enter your choice (1-3): ").strip()
-            
-            if choice == '1':
-                print("\n🚀 Starting CLI interface...")
-                import main
-                main.main()
-                break
-                
-            elif choice == '2':
-                print("\n🌐 Starting web interface...")
-                print("This will open in your default web browser.")
-                import web_gui
-                web_gui.main()
-                break
-                
-            elif choice == '3':
-                print("\n👋 Goodbye!")
-                sys.exit(0)
-                
-            else:
-                print("❌ Invalid choice. Please enter 1, 2, or 3.")
-                
-        except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
-            sys.exit(0)
-        except Exception as e:
-            print(f"\n❌ Error: {e}")
-            print("Please try again.")
+    try:
+        from web_gui import start_web_gui
+        start_web_gui()
+    except ImportError as e:
+        print(f"❌ Error: Missing required modules: {e}")
+        print("Please ensure all dependencies are installed.")
+        print("Run: pip install -r requirements.txt")
+        input("Press Enter to exit...")
+    except KeyboardInterrupt:
+        print("\n\n👋 Goodbye!")
+        sys.exit(0)
+    except Exception as e:
+        print(f"❌ Error starting web interface: {e}")
+        input("Press Enter to exit...")
 
 
 if __name__ == "__main__":
