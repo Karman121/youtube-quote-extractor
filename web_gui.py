@@ -25,14 +25,32 @@ from main import (
     process_youtube_url_only, process_timestamps
 )
 
-# Global log capture
+# Global log capture - Initialize properly for web GUI
 log_capture_string = StringIO()
-log_handler = logging.StreamHandler(log_capture_string)
-log_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, handlers=[log_handler])
+# Create a custom handler that writes to both console and our string buffer
+class DualHandler(logging.Handler):
+    def __init__(self, string_io):
+        super().__init__()
+        self.string_io = string_io
+        
+    def emit(self, record):
+        msg = self.format(record)
+        self.string_io.write(msg + '\n')
+        print(msg)  # Also print to console
+
+# Set up the dual logging handler
+dual_handler = DualHandler(log_capture_string)
+dual_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+# Configure root logger to use our dual handler
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers.clear()  # Clear existing handlers
+root_logger.addHandler(dual_handler)
+
 logger = logging.getLogger(__name__)
+
 
 class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -88,261 +106,316 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #ff6b9d 0%, #c44569 50%, #f8b500 100%);
             min-height: 100vh;
-            color: #333;
+            padding: 20px;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+            overflow: hidden;
         }
 
         .header {
-            text-align: center;
-            margin-bottom: 30px;
+            background: linear-gradient(135deg, #ff6b9d 0%, #c44569 50%, #f8b500 100%);
             color: white;
+            padding: 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+            pointer-events: none;
         }
 
         .header h1 {
-            font-size: 2.5em;
+            font-size: 3em;
             margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            font-weight: 700;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            position: relative;
+            z-index: 1;
         }
 
         .header p {
-            font-size: 1.1em;
+            font-size: 1.2em;
             opacity: 0.9;
+            position: relative;
+            z-index: 1;
         }
 
-        .main-tabs {
+        .tabs {
             display: flex;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px 10px 0 0;
-            overflow: hidden;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
         }
 
         .tab {
             flex: 1;
-            padding: 15px 20px;
-            background: transparent;
+            padding: 20px;
+            background: none;
             border: none;
-            color: white;
-            cursor: pointer;
             font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
             transition: all 0.3s ease;
+            color: #6c757d;
+            border-bottom: 3px solid transparent;
         }
 
         .tab:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: #e9ecef;
+            color: #495057;
         }
 
         .tab.active {
             background: white;
-            color: #333;
+            color: #ff6b9d;
+            border-bottom-color: #ff6b9d;
         }
 
         .tab-content {
-            background: white;
-            border-radius: 0 0 15px 15px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
             display: none;
+            padding: 30px;
         }
 
         .tab-content.active {
             display: block;
         }
 
-        .form-group {
-            margin-bottom: 20px;
+        .section {
+            margin-bottom: 30px;
+            padding: 25px;
+            border: 2px solid #f1f3f4;
+            border-radius: 15px;
+            background: linear-gradient(135deg, #fafbfc 0%, #f8f9fa 100%);
+            transition: all 0.3s ease;
         }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
+        
+        .section:hover {
+            border-color: #ff6b9d;
+            box-shadow: 0 5px 15px rgba(255, 107, 157, 0.1);
+        }
+        
+        .section h3 {
+            color: #2d3436;
+            margin-bottom: 15px;
+            font-size: 1.3em;
             font-weight: 600;
-            color: #555;
         }
 
-        .form-group input, .form-group textarea, .form-group select {
+        input[type="text"], input[type="url"], input[type="number"], textarea, select {
             width: 100%;
-            padding: 12px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
             font-size: 16px;
-            transition: border-color 0.3s ease;
+            font-family: inherit;
+            background: white;
+            transition: all 0.3s ease;
         }
 
-        .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+        input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus, textarea:focus, select:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #ff6b9d;
+            box-shadow: 0 0 0 3px rgba(255, 107, 157, 0.1);
         }
 
-        .form-group textarea {
-            min-height: 100px;
+        textarea {
             resize: vertical;
+            min-height: 120px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+            line-height: 1.5;
         }
 
         .radio-group {
             display: flex;
-            gap: 20px;
-            margin-top: 10px;
+            gap: 25px;
+            margin: 15px 0;
         }
 
-        .radio-group label {
+        .radio-item {
             display: flex;
             align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            font-weight: normal;
+            gap: 10px;
+            padding: 10px 15px;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .radio-item:hover {
+            background: rgba(255, 107, 157, 0.05);
+        }
+        
+        input[type="radio"] {
+            width: 20px;
+            height: 20px;
+            accent-color: #ff6b9d;
         }
 
         .context-settings {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-top: 15px;
+            gap: 25px;
         }
 
-        .context-settings input {
-            text-align: center;
+        .context-item label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .context-item input {
+            width: 120px;
         }
 
         .hidden {
-            display: none !important;
+            display: none;
         }
 
-        .button-group {
+        .buttons {
             display: flex;
             gap: 15px;
             margin-top: 30px;
+            flex-wrap: wrap;
         }
 
-        .btn {
-            padding: 12px 24px;
+        button {
+            padding: 15px 30px;
             border: none;
-            border-radius: 8px;
+            border-radius: 12px;
             font-size: 16px;
+            font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #ff6b9d 0%, #c44569 100%);
             color: white;
+            box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4);
         }
 
         .btn-primary:hover:not(:disabled) {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6);
         }
 
         .btn-secondary {
-            background: #6c757d;
-            color: white;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            color: #495057;
+            border: 2px solid #dee2e6;
         }
 
         .btn-secondary:hover:not(:disabled) {
-            background: #5a6268;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-color: #ff6b9d;
         }
 
         .btn-danger {
-            background: #dc3545;
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
             color: white;
         }
 
-        .btn-danger:hover:not(:disabled) {
-            background: #c82333;
+        .btn-success {
+            background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
+            color: white;
         }
 
-        .btn:disabled {
+        button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
         }
 
         .status {
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            margin-top: 20px;
-            font-weight: 600;
-            text-align: center;
+            background: linear-gradient(135deg, #2d3436 0%, #636e72 100%);
+            color: white;
+            padding: 20px 30px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+            font-weight: 500;
         }
 
         .results {
             margin-top: 30px;
-            background: #f8f9fa;
-            border-radius: 15px;
             padding: 25px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 15px;
+            border: 2px solid #e9ecef;
         }
 
         .result-tabs {
             display: flex;
-            gap: 10px;
             margin-bottom: 20px;
+            border-bottom: 2px solid #dee2e6;
         }
 
         .result-tab {
-            padding: 10px 20px;
-            background: #e9ecef;
+            padding: 12px 25px;
+            background: none;
             border: none;
-            border-radius: 8px;
+            border-bottom: 3px solid transparent;
             cursor: pointer;
+            font-weight: 600;
+            color: #6c757d;
             transition: all 0.3s ease;
         }
 
         .result-tab.active {
-            background: #667eea;
-            color: white;
+            border-bottom-color: #ff6b9d;
+            color: #ff6b9d;
         }
 
         .result-content {
             background: white;
-            padding: 20px;
-            border-radius: 8px;
+            padding: 25px;
+            border-radius: 12px;
             border: 1px solid #dee2e6;
+            min-height: 300px;
             white-space: pre-wrap;
-            max-height: 400px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
             line-height: 1.6;
-        }
-
-        .download-buttons {
-            margin-top: 15px;
-            display: flex;
-            gap: 10px;
-        }
-
-        .advanced-section {
-            margin-bottom: 30px;
-        }
-
-        .advanced-section h3 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.3em;
+            overflow-y: auto;
+            max-height: 500px;
         }
 
         .logs-container {
             background: #1a1a1a;
             color: #00ff00;
             padding: 20px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            max-height: 500px;
+            border-radius: 12px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            max-height: 400px;
             overflow-y: auto;
-            margin-bottom: 20px;
+            border: 2px solid #333;
         }
 
         .log-entry {
             margin-bottom: 5px;
-            line-height: 1.4;
+            padding: 2px 0;
         }
 
         .log-timestamp {
@@ -358,32 +431,41 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         }
 
         .log-level-ERROR {
-            color: #ff0000;
+            color: #ff4444;
         }
 
-        .log-level-DEBUG {
-            color: #00aaff;
+        .advanced-section {
+            margin-bottom: 25px;
         }
 
         @media (max-width: 768px) {
             .container {
-                padding: 10px;
+                margin: 10px;
+                border-radius: 15px;
+            }
+            
+            .header {
+                padding: 25px;
             }
 
             .header h1 {
-                font-size: 2em;
+                font-size: 2.2em;
+            }
+            
+            .tabs {
+                flex-direction: column;
             }
 
             .context-settings {
                 grid-template-columns: 1fr;
             }
 
-            .button-group {
+            .buttons {
                 flex-direction: column;
             }
 
-            .result-tabs {
-                flex-direction: column;
+            button {
+                width: 100%;
             }
         }
     </style>
@@ -391,128 +473,125 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎥 YouTube Quote Extractor</h1>
+            <h1>🎬 YouTube Quote Extractor</h1>
             <p>Extract transcripts and quotes from YouTube videos with AI</p>
         </div>
 
-        <div class="main-tabs">
-            <button class="tab active" onclick="showMainTab('main')">Main</button>
-            <button class="tab" onclick="showMainTab('advanced')">Advanced Settings</button>
-            <button class="tab" onclick="showMainTab('logs')">Live Logs</button>
+        <div class="tabs">
+            <button class="tab active" onclick="showMainTab('main')">📝 Main</button>
+            <button class="tab" onclick="showMainTab('advanced')">⚙️ Advanced</button>
+            <button class="tab" onclick="showMainTab('logs')">📊 Live Logs</button>
         </div>
 
         <!-- Main Tab -->
-        <div id="main-tab" class="tab-content active">
-            <div class="form-group">
-                <label for="url">YouTube URL:</label>
-                <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=..." required>
+        <div class="tab-content active" id="main-tab">
+            <div class="section">
+                <h3>1. YouTube URL</h3>
+                <input type="url" id="url" placeholder="Enter YouTube URL here..." />
             </div>
 
-            <div class="form-group">
-                <label>Processing Mode:</label>
+            <div class="section">
+                <h3>2. Processing Mode</h3>
                 <div class="radio-group">
-                    <label>
-                        <input type="radio" name="mode" value="transcript" checked>
-                        Transcript Only
-                    </label>
-                    <label>
-                        <input type="radio" name="mode" value="both">
-                        Transcript + Quotes
-                    </label>
-                </div>
-            </div>
-
-            <div id="quote-settings" class="hidden">
-                <div class="form-group">
-                    <label>Quote Context Settings:</label>
-                    <div class="context-settings">
-                        <div>
-                            <label for="context-before">Seconds Before:</label>
-                            <input type="number" id="context-before" value="30" min="0" max="300">
-                        </div>
-                        <div>
-                            <label for="context-after">Seconds After:</label>
-                            <input type="number" id="context-after" value="60" min="0" max="300">
-                        </div>
+                    <div class="radio-item">
+                        <input type="radio" id="transcript-only" name="mode" value="transcript" />
+                        <label for="transcript-only">Generate Transcript Only</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" id="transcript-quotes" name="mode" value="both" checked />
+                        <label for="transcript-quotes">Generate Transcript + Extract Quotes</label>
                     </div>
                 </div>
             </div>
 
-            <div id="timestamps-section" class="form-group hidden">
-                <label for="timestamps">Timestamps (one per line):</label>
-                <textarea id="timestamps" placeholder="1:23&#10;2:45&#10;5:12"></textarea>
-            </div>
-
-            <div class="button-group">
-                <button id="process-btn" class="btn btn-primary" onclick="startProcessing()">
-                    🚀 Start Processing
-                </button>
-                <button id="stop-btn" class="btn btn-secondary" onclick="stopProcessing()" disabled>
-                    ⏹️ Stop
-                </button>
-                <button class="btn btn-danger" onclick="clearAll()">
-                    🗑️ Clear All
-                </button>
-            </div>
-
-            <div id="results" class="results hidden">
-                <div class="result-tabs">
-                    <button class="result-tab active" onclick="showResultTab('transcript')">Transcript</button>
-                    <button id="quotes-tab" class="result-tab" onclick="showResultTab('quotes')" style="display: none;">Quotes</button>
+            <div class="section" id="quote-settings">
+                <h3>3. Context Settings</h3>
+                <div class="context-settings">
+                    <div class="context-item">
+                        <label for="context-before">Seconds Before:</label>
+                        <input type="number" id="context-before" value="30" min="0" max="300" />
+                    </div>
+                    <div class="context-item">
+                        <label for="context-after">Seconds After:</label>
+                        <input type="number" id="context-after" value="60" min="0" max="600" />
+                    </div>
                 </div>
-                <div id="result-content" class="result-content"></div>
-                <div class="download-buttons">
-                    <button class="btn btn-primary" onclick="downloadResult('transcript')">📥 Download Transcript</button>
-                    <button id="download-quotes-btn" class="btn btn-primary" onclick="downloadResult('quotes')" style="display: none;">📥 Download Quotes</button>
+            </div>
+
+            <div class="section" id="timestamps-section">
+                <h3>4. Timestamps</h3>
+                <p style="color: #666; margin-bottom: 10px;">Enter timestamps (MM:SS or HH:MM:SS) one per line:</p>
+                <textarea id="timestamps" placeholder="1:30 - Discussion about AI&#10;2:45 - Important quote&#10;5:20 - Key insight"></textarea>
+            </div>
+
+            <div class="buttons">
+                <button class="btn-primary" id="process-btn" onclick="startProcessing()">🚀 Start Processing</button>
+                <button class="btn-danger" id="stop-btn" onclick="stopProcessing()" disabled>⏹ Stop</button>
+                <button class="btn-secondary" onclick="clearAll()">🗑 Clear All</button>
+            </div>
+
+            <div class="results hidden" id="results">
+                <div class="result-tabs">
+                    <button class="result-tab active" onclick="showResultTab('transcript')">📝 Transcript</button>
+                    <button class="result-tab" id="quotes-tab" onclick="showResultTab('quotes')">💬 Quotes</button>
+                </div>
+                <div class="result-content" id="result-content"></div>
+                <div style="margin-top: 15px;">
+                    <button class="btn-secondary" onclick="downloadResult('transcript')">💾 Download Transcript</button>
+                    <button class="btn-secondary" id="download-quotes-btn" onclick="downloadResult('quotes')">💾 Download Quotes</button>
                 </div>
             </div>
         </div>
 
-        <!-- Advanced Settings Tab -->
-        <div id="advanced-tab" class="tab-content">
+        <!-- Advanced Tab -->
+        <div class="tab-content" id="advanced-tab">
             <div class="advanced-section">
                 <h3>🤖 AI Model Settings</h3>
-                <div class="form-group">
+                <div class="section">
                     <label for="gemini-model">Gemini Model:</label>
                     <select id="gemini-model">
-                        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
-                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                        <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B</option>
-                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                        <option value="gemini-1.0-pro">Gemini 1.0 Pro</option>
+                        <option value="gemini-2.5-flash" selected>gemini-2.5-flash (Default)</option>
+                        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                        <option value="gemini-2.5-flash-lite-preview-06-17">gemini-2.5-flash-lite-preview-06-17</option>
+                        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                        <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+                        <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                        <option value="gemini-1.5-flash-8b">gemini-1.5-flash-8b</option>
+                        <option value="gemini-1.5-pro">gemini-1.5-pro</option>
                     </select>
                 </div>
             </div>
 
             <div class="advanced-section">
-                <h3>📝 Transcription Settings</h3>
-                <div class="form-group">
-                    <label for="transcription-prompt">Transcription Prompt:</label>
-                    <textarea id="transcription-prompt" rows="4"></textarea>
+                <h3>📝 Transcription Prompt</h3>
+                <div class="section">
+                    <textarea id="transcription-prompt" rows="6" placeholder="Enter transcription prompt..."></textarea>
                 </div>
             </div>
 
             <div class="advanced-section">
                 <h3>💬 Quote Extraction Instructions</h3>
-                <div class="form-group">
-                    <label for="quote-instructions">Instructions (one per line):</label>
-                    <textarea id="quote-instructions" rows="12"></textarea>
+                <div class="section">
+                    <textarea id="quote-instructions" rows="12" placeholder="Enter quote extraction instructions (one per line)..."></textarea>
                 </div>
             </div>
 
-            <div class="button-group">
-                <button class="btn btn-primary" onclick="saveAdvancedSettings()">💾 Save Settings</button>
-                <button class="btn btn-secondary" onclick="resetAdvancedSettings()">🔄 Reset to Defaults</button>
+            <div class="buttons">
+                <button class="btn-success" onclick="saveAdvancedSettings()">💾 Save Settings</button>
+                <button class="btn-secondary" onclick="resetAdvancedSettings()">🔄 Reset to Defaults</button>
             </div>
         </div>
 
-        <!-- Live Logs Tab -->
-        <div id="logs-tab" class="tab-content">
-            <div class="button-group">
-                <button class="btn btn-primary" onclick="refreshLogs()">🔄 Refresh</button>
-            </div>
-            <div id="logs-container" class="logs-container">
-                <div class="log-entry">Logs will appear here during processing...</div>
+        <!-- Logs Tab -->
+        <div class="tab-content" id="logs-tab">
+            <div class="section">
+                <h3>📊 Live Processing Logs</h3>
+                <div class="logs-container" id="logs-container">
+                    <div class="log-entry">Ready to process...</div>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="btn-secondary" onclick="refreshLogs()">🔄 Refresh</button>
+                </div>
             </div>
         </div>
         
@@ -963,6 +1042,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
+
 def start_web_gui(port=8080):
     """Start the web GUI server"""
     try:
@@ -994,6 +1074,7 @@ def start_web_gui(port=8080):
         print(f"❌ Unexpected error: {e}")
         sys.exit(1)
 
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='YouTube Quote Extractor Web GUI')
@@ -1001,6 +1082,7 @@ def main():
     
     args = parser.parse_args()
     start_web_gui(args.port)
+
 
 if __name__ == "__main__":
     main() 
