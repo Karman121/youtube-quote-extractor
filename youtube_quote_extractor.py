@@ -1,23 +1,33 @@
-import re
-import yt_dlp
-import logging
+# =========================
+# Imports and Configuration
+# =========================
 import os
+import re
+import base64
+import logging
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 from dotenv import load_dotenv
+import yt_dlp
 import google.generativeai as genai
 from ratelimit import limits, sleep_and_retry
 from tenacity import retry, stop_after_attempt, wait_exponential
 from pydub import AudioSegment
 from pydub.utils import mediainfo
-import base64
 
 # Load environment variables
 load_dotenv()
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# =========================
+# Data Classes
+# =========================
 
 
 @dataclass
@@ -26,7 +36,11 @@ class TimestampInfo:
     description: str = ""
 
 
-def sanitize_filename(filename):
+# =========================
+# Utility Functions
+# =========================
+
+def sanitize_filename(filename: str) -> str:
     """Sanitize filename by removing invalid characters."""
     return re.sub(r'[^a-zA-Z0-9_-]', '_', filename)
 
@@ -100,15 +114,15 @@ def extract_timestamps_and_descriptions(text: str) -> List[TimestampInfo]:
         r'(\d{1,2}:\d{2}(?::\d{2})?)\s+(.*?)(?=\n\d{1,2}:\d{2}|$)',
         r'@?(\d{1,2}:\d{2}(?::\d{2})?)',  # With optional @
     ]
-    
+
     results = []
     lines = text.strip().split('\n')
-    
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
-            
+
         # Try each pattern
         for pattern in timestamp_patterns:
             match = re.search(pattern, line)
@@ -124,14 +138,14 @@ def extract_timestamps_and_descriptions(text: str) -> List[TimestampInfo]:
                 else:
                     results.append(TimestampInfo(timestamp=timestamp))
                 break
-    
+
     # Log what we found
     logger.info("=== Extracted Timestamps ===")
     for info in results:
         logger.info(f"Timestamp: {info.timestamp}")
         if info.description:
             logger.info(f"Description: {info.description}")
-    
+
     return results
 
 
@@ -180,10 +194,13 @@ def download_audio(url: str, output_path: str = ".") -> Optional[Tuple[str, str,
         title = info.get('title', 'video')
         description = info.get('description', '')
         sanitized_title = sanitize_filename(title)
-        expected_filepath = os.path.join(output_path, f"{sanitized_title}.mp3")
+        expected_filepath = os.path.join(
+            output_path, f"{sanitized_title}.mp3"
+        )
         if os.path.exists(expected_filepath):
             logger.info(
-                f"✅ Audio file already exists: '{expected_filepath}'. Skipping download."
+                f"✅ Audio file already exists: '{expected_filepath}'. "
+                "Skipping download."
             )
             return expected_filepath, title, description
     ydl_opts = {
@@ -209,8 +226,12 @@ def split_audio(audio_path, chunk_duration):
     chunk_duration_ms = chunk_duration * 1000
     
     # Calculate number of chunks needed, ensuring we cover the entire duration
-    num_chunks = max(1, (duration_ms + chunk_duration_ms - 1) // chunk_duration_ms)
-    logger.info(f"Audio duration: {duration_ms/1000:.2f}s, splitting into {num_chunks} chunks")
+    num_chunks = max(
+        1, (duration_ms + chunk_duration_ms - 1) // chunk_duration_ms
+    )
+    logger.info(
+        f"Audio duration: {duration_ms/1000:.2f}s, splitting into {num_chunks} chunks"
+    )
     
     chunks = []
     for i in range(num_chunks):
@@ -222,7 +243,9 @@ def split_audio(audio_path, chunk_duration):
             start_ms = max(0, start_ms - 10000)  # 10 seconds overlap, but don't go below 0
         if i < num_chunks - 1:
             # 10 seconds overlap, but don't exceed duration
-            end_ms = min(duration_ms, end_ms + 10000)
+            end_ms = min(
+                duration_ms, end_ms + 10000
+            )
             
         chunk = audio[start_ms:end_ms]
         chunk_path = f"{audio_path}_chunk_{i+1}.mp3"
@@ -232,7 +255,7 @@ def split_audio(audio_path, chunk_duration):
             f"Created chunk {i+1}/{num_chunks}: "
             f"{start_ms/1000:.2f}s - {end_ms/1000:.2f}s"
         )
-    
+
     return chunks
 
 
@@ -265,7 +288,8 @@ def process_file_with_retry(chat_session, file):
         response = chat_session.send_message(
             "You are a professional audio transcriptionist. Your task is to:\n"
             "1. Transcribe the audio with high accuracy\n"
-            "2. Identify and label each speaker by their name (e.g., 'Bye Manning', 'Brian Lewis')\n"
+            "2. Identify and label each speaker by their name (e.g., 'Bye Manning', "
+            "'Brian Lewis')\n"
             "3. Format each line as: '[MM:SS] Speaker Name: Text'\n"
             "4. Include timestamps in MM:SS format, starting from the exact time provided\n"
             "5. Keep complete sentences and thoughts together\n"
@@ -273,7 +297,10 @@ def process_file_with_retry(chat_session, file):
             "7. If you can't identify a speaker, use 'Speaker 1', 'Speaker 2', etc.\n"
             "8. Add a new line between different speakers\n"
             "9. If it's a single speaker, break it into paragraphs.\n"
-            "10. IMPORTANT: Maintain exact timestamps as provided in the audio - do not adjust or estimate them."
+            (
+                "10. IMPORTANT: Maintain exact timestamps as provided in the audio - "
+                "do not adjust or estimate them."
+            )
         )
         return response
     except Exception as e:
@@ -323,7 +350,10 @@ def get_transcript_segment(
         next_timestamp_seconds = parse_timestamp_to_seconds(next_ts_info.timestamp)
         duration_to_next_ts = next_timestamp_seconds - target_seconds
         context_after_sec = min(duration_to_next_ts, manual_context_limit_sec)
-        logger.info(f"Next timestamp is at {next_ts_info.timestamp} ({duration_to_next_ts}s away). Using context of {context_after_sec}s.")
+        logger.info(
+            f"Next timestamp is at {next_ts_info.timestamp} "
+            f"({duration_to_next_ts}s away). Using context of {context_after_sec}s."
+        )
     start_time = max(0, target_seconds - context_before_sec)
     end_time = target_seconds + context_after_sec
     segment_lines = []
@@ -336,7 +366,9 @@ def get_transcript_segment(
                 segment_lines.append(line)
     segment = '\n'.join(segment_lines)
     if not segment:
-        logger.warning(f"Could not find transcript segment for timestamp {current_ts_info.timestamp}.")
+        logger.warning(
+            f"Could not find transcript segment for timestamp {current_ts_info.timestamp}."
+        )
     return segment
 
 
@@ -353,8 +385,12 @@ def extract_quote_with_gemini(
     api_key = os.getenv('GEMINI_API_KEY')
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
-    focus_instruction = f"The user is particularly interested in quotes related to: '{user_description}'" if user_description else ""
-    prompt = f"""
+    focus_instruction = (
+        f"The user is particularly interested in quotes related to: '{user_description}'"
+        if user_description else ""
+    )
+    prompt = (
+        f"""
     You are a professional journalist extracting meaningful quotes for a news article. Your task is to:
     1. Analyze the transcript, video description, and any context provided.
     2. Extract insightful, newsworthy quotes suitable for article use.
@@ -384,6 +420,7 @@ def extract_quote_with_gemini(
     {transcript_segment}
     ---
     """
+    )
     logger.info(f"Extracting quote for timestamp {timestamp}...")
     response = model.generate_content(prompt)
     return f"[{timestamp}]\n{response.text.strip()}"
@@ -401,62 +438,130 @@ def main():
         print("Paste your YouTube URL and timestamps (MM:SS - description) below. End input with an empty line:")
         lines = []
         while True:
-            line = input()
+            try:
+                line = input()
+            except EOFError:
+                break
             if not line.strip():
                 break
             lines.append(line)
         input_text = '\n'.join(lines)
         youtube_url, timestamps_to_process = parse_input(input_text)
-        if not youtube_url or not timestamps_to_process:
-            logger.error("Missing YouTube URL or timestamps. Please check your input.")
+        if not youtube_url:
+            print("[ERROR] No YouTube URL found in your input. Please provide a valid URL.")
+            logger.error("No YouTube URL found in input.")
             return
-        manual_context_limit_sec = int(input("Enter context window after timestamp (seconds, e.g. 90): ").strip() or "90")
-        context_before_sec = int(input("Enter context window before timestamp (seconds, e.g. 30): ").strip() or "30")
+        if not timestamps_to_process:
+            print("[ERROR] No timestamps found in your input. Please provide at least one timestamp in MM:SS or HH:MM:SS format.")
+            logger.error("No timestamps found in input.")
+            return
+        # Validate timestamp formats
+        for ts_info in timestamps_to_process:
+            if not re.match(r'^(\d{1,2}:\d{2})(?::\d{2})?$', ts_info.timestamp):
+                print(f"[ERROR] Invalid timestamp format: {ts_info.timestamp}. Use MM:SS or HH:MM:SS.")
+                logger.error(f"Invalid timestamp format: {ts_info.timestamp}")
+                return
+        try:
+            manual_context_limit_sec = int(input("Enter context window after timestamp (seconds, e.g. 90): ").strip() or "90")
+            context_before_sec = int(input("Enter context window before timestamp (seconds, e.g. 30): ").strip() or "30")
+        except Exception:
+            print("[ERROR] Invalid input for context window. Please enter a number.")
+            return
         # Download audio and get metadata
-        download_result = download_audio(youtube_url)
+        try:
+            download_result = download_audio(youtube_url)
+        except Exception as e:
+            print(f"[ERROR] Failed to download audio: {e}")
+            logger.error(f"Failed to download audio: {e}")
+            return
         if not download_result:
+            print("[ERROR] Failed to download audio. Halting process.")
             logger.error("Failed to download audio. Halting process.")
             return
         audio_file_path, video_title, video_description = download_result
         transcript_filename = f"{sanitize_filename(video_title)}_transcript.txt"
-        if os.path.exists(transcript_filename):
-            logger.info(f"✅ Found existing transcript file: {transcript_filename}. Skipping transcription.")
-            with open(transcript_filename, 'r', encoding='utf-8') as f:
-                full_transcript = f.read()
-        else:
-            logger.info(f"No existing transcript found. Starting new transcription for: {video_title}")
-            full_transcript = transcribe_audio_with_chunking(audio_file_path, transcript_filename)
-            if not full_transcript:
-                logger.error("Failed to transcribe audio. Halting process.")
-                return
+        try:
+            if os.path.exists(transcript_filename):
+                logger.info(f"✅ Found existing transcript file: {transcript_filename}. Skipping transcription.")
+                with open(transcript_filename, 'r', encoding='utf-8') as f:
+                    full_transcript = f.read()
+            else:
+                logger.info(f"No existing transcript found. Starting new transcription for: {video_title}")
+                full_transcript = transcribe_audio_with_chunking(audio_file_path, transcript_filename)
+        except Exception as e:
+            print(f"[ERROR] Failed to read or write transcript file: {e}")
+            logger.error(f"Failed to read or write transcript file: {e}")
+            return
+        if not full_transcript or not full_transcript.strip():
+            print("[ERROR] Transcript is empty. Halting process.")
+            logger.error("Transcript is empty. Halting process.")
+            return
         extracted_quotes = []
+        # Find the maximum timestamp in the transcript (in seconds)
+        transcript_lines = full_transcript.strip().split('\n')
+        last_ts_seconds = 0
+        for line in reversed(transcript_lines):
+            match = re.search(r'^\[(\d{1,2}:\d{2}(?::\d{2})?)\]', line)
+            if match:
+                last_ts_seconds = parse_timestamp_to_seconds(match.group(1))
+                break
         for i, ts_info in enumerate(timestamps_to_process):
+            ts_seconds = parse_timestamp_to_seconds(ts_info.timestamp)
+            if ts_seconds > last_ts_seconds:
+                logger.error(f"Timestamp {ts_info.timestamp} is beyond the end of the transcript/audio (max is {last_ts_seconds//60}:{last_ts_seconds%60:02d}). Skipping.")
+                print(f"[ERROR] Timestamp {ts_info.timestamp} is beyond the end of the transcript/audio (max is {last_ts_seconds//60}:{last_ts_seconds%60:02d}). Skipping.")
+                continue
             logger.info(f"Processing timestamp {i+1}/{len(timestamps_to_process)}: {ts_info.timestamp}...")
-            segment = get_transcript_segment(
-                raw_transcript=full_transcript,
-                current_timestamp_index=i,
-                all_timestamps=timestamps_to_process,
-                manual_context_limit_sec=manual_context_limit_sec,
-                context_before_sec=context_before_sec
-            )
+            try:
+                segment = get_transcript_segment(
+                    raw_transcript=full_transcript,
+                    current_timestamp_index=i,
+                    all_timestamps=timestamps_to_process,
+                    manual_context_limit_sec=manual_context_limit_sec,
+                    context_before_sec=context_before_sec
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to extract transcript segment for {ts_info.timestamp}: {e}")
+                logger.error(f"Failed to extract transcript segment for {ts_info.timestamp}: {e}")
+                continue
             if not segment:
                 logger.warning(f"Skipping quote extraction for {ts_info.timestamp} due to empty segment.")
+                print(f"[WARNING] No transcript segment found for {ts_info.timestamp}. Skipping.")
                 continue
-            quote = extract_quote_with_gemini(
-                segment,
-                ts_info.timestamp,
-                video_description,
-                ts_info.description
-            )
+            try:
+                quote = extract_quote_with_gemini(
+                    segment,
+                    ts_info.timestamp,
+                    video_description,
+                    ts_info.description
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to extract quote for {ts_info.timestamp}: {e}")
+                logger.error(f"Failed to extract quote for {ts_info.timestamp}: {e}")
+                continue
             extracted_quotes.append(quote)
         if extracted_quotes:
             quotes_filename = f"{sanitize_filename(video_title)}_quotes.txt"
-            save_text_to_file('\n\n'.join(extracted_quotes), quotes_filename)
+            try:
+                save_text_to_file('\n\n'.join(extracted_quotes), quotes_filename)
+            except Exception as e:
+                print(f"[ERROR] Failed to save quotes to file: {e}")
+                logger.error(f"Failed to save quotes to file: {e}")
+                return
             logger.info(f"All quotes saved to {quotes_filename}")
+            print(f"All quotes saved to {quotes_filename}")
         else:
             logger.warning("No quotes were extracted for any of the provided timestamps.")
+            print("[WARNING] No quotes were extracted for any of the provided timestamps.")
+    except ValueError as ve:
+        print(f"[ERROR] {ve}")
+        logger.error(f"ValueError: {ve}")
+    except FileNotFoundError as fnfe:
+        print(f"[ERROR] {fnfe}")
+        logger.error(f"FileNotFoundError: {fnfe}")
     except Exception as e:
-        logger.error(f"An error occurred in the main execution block: {e}")
+        print(f"[ERROR] An unexpected error occurred: {e}")
+        logger.error(f"An unexpected error occurred in the main execution block: {e}")
 
 
 def get_audio_file_info(audio_path: str) -> Tuple[float, float]:
@@ -562,16 +667,27 @@ def transcribe_audio(audio_path: str, transcript_filename: str) -> str:
     """Transcribe audio using Gemini 2.0 Flash API with speaker diarization."""
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
+        print("[ERROR] GEMINI_API_KEY not found in environment variables. Please check your .env file.")
         raise ValueError("GEMINI_API_KEY not found in environment variables")
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
     if not os.path.exists(audio_path):
+        print(f"[ERROR] Audio file not found: {audio_path}")
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
-    with open(audio_path, 'rb') as audio_file:
-        audio_data = audio_file.read()
+    try:
+        with open(audio_path, 'rb') as audio_file:
+            audio_data = audio_file.read()
+    except Exception as e:
+        print(f"[ERROR] Failed to read audio file: {e}")
+        raise
     if not audio_data:
+        print("[ERROR] Audio file is empty")
         raise ValueError("Audio file is empty")
-    audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+    try:
+        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+    except Exception as e:
+        print(f"[ERROR] Failed to encode audio file: {e}")
+        raise
     prompt = ("""
         You are a professional audio transcriptionist. Your task is to:
         1. Transcribe the audio with high accuracy.
@@ -590,12 +706,21 @@ def transcribe_audio(audio_path: str, transcript_filename: str) -> str:
         }
     ]
     logger.info("Sending transcription request to Gemini API...")
-    response = model.generate_content(content_parts)
+    try:
+        response = model.generate_content(content_parts)
+    except Exception as e:
+        print(f"[ERROR] Failed to get response from Gemini API: {e}")
+        raise
     if not response or not response.text:
+        print("[ERROR] Empty response from Gemini API")
         raise ValueError("Empty response from Gemini API")
     logger.info("Successfully received transcript from Gemini API.")
-    with open(transcript_filename, 'w', encoding='utf-8') as f:
-        f.write(response.text)
+    try:
+        with open(transcript_filename, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+    except Exception as e:
+        print(f"[ERROR] Failed to save transcript to file: {e}")
+        raise
     logger.info(f"Transcript saved to {transcript_filename}")
     return response.text
 
@@ -612,4 +737,4 @@ def get_youtube_description(video_url: str) -> Optional[str]:
 
 
 if __name__ == "__main__":
-    main() 
+    main()
