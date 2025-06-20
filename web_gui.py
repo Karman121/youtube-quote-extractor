@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 log_capture_string = StringIO()
 
 # Create a custom handler that writes to both console and our string buffer
+
+
 class DualHandler(logging.Handler):
     def __init__(self, string_io):
         super().__init__()
@@ -32,6 +34,7 @@ class DualHandler(logging.Handler):
         msg = self.format(record)
         self.string_io.write(msg + '\n')
         print(msg)  # Also print to console
+
 
 # Set up the dual logging handler BEFORE importing other modules
 dual_handler = DualHandler(log_capture_string)
@@ -43,28 +46,35 @@ root_logger.setLevel(logging.INFO)
 root_logger.handlers.clear()  # Clear existing handlers
 root_logger.addHandler(dual_handler)
 
-# Now import our modules - they will use the logging configuration we just set up
-from config import DEFAULT_SETTINGS, QUOTE_EXTRACTION_INSTRUCTIONS, TRANSCRIPTION_PROMPT
+# Now import our modules - they will use the logging configuration set up
+from config import (
+    DEFAULT_SETTINGS, QUOTE_EXTRACTION_INSTRUCTIONS, TRANSCRIPTION_PROMPT
+)
 from main import (
     validate_url, validate_timestamps_format, parse_input,
-    process_youtube_url_only, process_timestamps
+    process_youtube_url_only, process_timestamps, process_analysis
 )
 
 logger = logging.getLogger(__name__)
 
 
 class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
+    # Shared app state across all instances
+    shared_app_state = {
+        'processing': False,
+        'status': 'Ready',
+        'transcript': '',
+        'quotes': [],
+        'analysis': '',
+        'video_title': '',
+        'gemini_model': DEFAULT_SETTINGS['gemini_model'],
+        'transcription_prompt': TRANSCRIPTION_PROMPT,
+        'quote_instructions': QUOTE_EXTRACTION_INSTRUCTIONS.copy()
+    }
+    
     def __init__(self, *args, **kwargs):
-        self.app_state = {
-            'processing': False,
-            'status': 'Ready',
-            'transcript': '',
-            'quotes': [],
-            'video_title': '',
-            'gemini_model': DEFAULT_SETTINGS['gemini_model'],
-            'transcription_prompt': TRANSCRIPTION_PROMPT,
-            'quote_instructions': QUOTE_EXTRACTION_INSTRUCTIONS.copy()
-        }
+        # Use shared state instead of instance state
+        self.app_state = self.shared_app_state
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
@@ -502,6 +512,10 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
                         <input type="radio" id="transcript-quotes" name="mode" value="both" checked />
                         <label for="transcript-quotes">Generate Transcript + Extract Quotes</label>
                     </div>
+                    <div class="radio-item">
+                        <input type="radio" id="transcript-analysis" name="mode" value="analysis" />
+                        <label for="transcript-analysis">Generate Transcript + Ask Questions</label>
+                    </div>
                 </div>
             </div>
 
@@ -525,6 +539,12 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
                 <textarea id="timestamps" placeholder="1:30 - Discussion about AI&#10;2:45 - Important quote&#10;5:20 - Key insight"></textarea>
             </div>
 
+            <div class="section hidden" id="question-section">
+                <h3>4. Your Question</h3>
+                <p style="color: #666; margin-bottom: 10px;">Ask any question about the video content:</p>
+                <textarea id="user-question" placeholder="What are the main points discussed in this video?&#10;&#10;Summarize the key insights about AI development.&#10;&#10;What does the speaker think about the future of technology?"></textarea>
+            </div>
+
             <div class="buttons">
                 <button class="btn-primary" id="process-btn" onclick="startProcessing()">🚀 Start Processing</button>
                 <button class="btn-danger" id="stop-btn" onclick="stopProcessing()" disabled>⏹ Stop</button>
@@ -535,11 +555,13 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
                 <div class="result-tabs">
                     <button class="result-tab active" onclick="showResultTab('transcript')">📝 Transcript</button>
                     <button class="result-tab" id="quotes-tab" onclick="showResultTab('quotes')">💬 Quotes</button>
+                    <button class="result-tab" id="analysis-tab" onclick="showResultTab('analysis')">🤔 Analysis</button>
                 </div>
                 <div class="result-content" id="result-content"></div>
                 <div style="margin-top: 15px;">
                     <button class="btn-secondary" onclick="downloadResult('transcript')">💾 Download Transcript</button>
                     <button class="btn-secondary" id="download-quotes-btn" onclick="downloadResult('quotes')">💾 Download Quotes</button>
+                    <button class="btn-secondary" id="download-analysis-btn" onclick="downloadResult('analysis')">💾 Download Analysis</button>
                 </div>
             </div>
         </div>
@@ -600,7 +622,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
     </div>
 
     <script>
-        let currentResults = { transcript: '', quotes: [], video_title: '' };
+        let currentResults = { transcript: '', quotes: [], analysis: '', video_title: '' };
         let currentTab = 'transcript';
         let currentMainTab = 'main';
         let logUpdateInterval;
@@ -610,17 +632,28 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             loadAdvancedSettings();
         }, 100);
         
-        // Toggle quote settings based on mode
+        // Toggle settings based on mode
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
             radio.addEventListener('change', function() {
                 const quoteSettings = document.getElementById('quote-settings');
                 const timestampsSection = document.getElementById('timestamps-section');
+                const questionSection = document.getElementById('question-section');
+                
                 if (this.value === 'transcript') {
+                    // Transcript only - hide all extra sections
                     quoteSettings.classList.add('hidden');
                     timestampsSection.classList.add('hidden');
-                } else {
+                    questionSection.classList.add('hidden');
+                } else if (this.value === 'both') {
+                    // Extract quotes - show quote settings and timestamps
                     quoteSettings.classList.remove('hidden');
                     timestampsSection.classList.remove('hidden');
+                    questionSection.classList.add('hidden');
+                } else if (this.value === 'analysis') {
+                    // Ask questions - show only question section
+                    quoteSettings.classList.add('hidden');
+                    timestampsSection.classList.add('hidden');
+                    questionSection.classList.remove('hidden');
                 }
             });
         });
@@ -746,6 +779,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             const url = document.getElementById('url').value.trim();
             const mode = document.querySelector('input[name="mode"]:checked').value;
             const timestamps = document.getElementById('timestamps').value.trim();
+            const userQuestion = document.getElementById('user-question').value.trim();
             const contextBefore = document.getElementById('context-before').value;
             const contextAfter = document.getElementById('context-after').value;
             
@@ -756,6 +790,11 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             
             if (mode === 'both' && !timestamps) {
                 alert('Please enter timestamps for quote extraction!');
+                return;
+            }
+            
+            if (mode === 'analysis' && !userQuestion) {
+                alert('Please enter a question for analysis!');
                 return;
             }
             
@@ -770,6 +809,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
                 url: url,
                 mode: mode,
                 timestamps: timestamps,
+                user_question: userQuestion,
                 context_before: parseInt(contextBefore),
                 context_after: parseInt(contextAfter)
             };
@@ -812,15 +852,18 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         function clearAll() {
             document.getElementById('url').value = '';
             document.getElementById('timestamps').value = '';
+            document.getElementById('user-question').value = '';
             document.getElementById('results').classList.add('hidden');
-            currentResults = { transcript: '', quotes: [], video_title: '' };
+            currentResults = { transcript: '', quotes: [], analysis: '', video_title: '' };
             document.getElementById('status').textContent = 'Cleared all fields';
         }
         
         function showResults() {
             document.getElementById('results').classList.remove('hidden');
             document.getElementById('quotes-tab').style.display = currentResults.quotes.length > 0 ? 'block' : 'none';
+            document.getElementById('analysis-tab').style.display = currentResults.analysis ? 'block' : 'none';
             document.getElementById('download-quotes-btn').style.display = currentResults.quotes.length > 0 ? 'inline-block' : 'none';
+            document.getElementById('download-analysis-btn').style.display = currentResults.analysis ? 'inline-block' : 'none';
             showResultTab('transcript');
         }
         
@@ -832,8 +875,10 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             const content = document.getElementById('result-content');
             if (tab === 'transcript') {
                 content.textContent = currentResults.transcript || 'No transcript available';
-            } else {
+            } else if (tab === 'quotes') {
                 content.textContent = currentResults.quotes.join('\\n\\n') || 'No quotes available';
+            } else if (tab === 'analysis') {
+                content.textContent = currentResults.analysis || 'No analysis available';
             }
         }
         
@@ -842,9 +887,12 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             if (type === 'transcript') {
                 content = currentResults.transcript;
                 filename = (currentResults.video_title || 'transcript') + '_transcript.txt';
-            } else {
+            } else if (type === 'quotes') {
                 content = currentResults.quotes.join('\\n\\n');
                 filename = (currentResults.video_title || 'quotes') + '_quotes.txt';
+            } else if (type === 'analysis') {
+                content = currentResults.analysis;
+                filename = (currentResults.video_title || 'analysis') + '_analysis.txt';
             }
             
             if (!content) {
@@ -885,6 +933,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         response = {
             'transcript': self.app_state['transcript'],
             'quotes': self.app_state['quotes'],
+            'analysis': self.app_state['analysis'],
             'video_title': self.app_state['video_title']
         }
         self.send_json_response(response)
@@ -923,6 +972,9 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         self.send_json_response({'logs': logs})
 
     def serve_settings(self):
+        logger.info(f"🔍 Serving settings - current model: {self.app_state['gemini_model']}")
+        logger.info(f"🔍 Shared state model: {self.shared_app_state['gemini_model']}")
+        
         response = {
             'gemini_model': self.app_state['gemini_model'],
             'transcription_prompt': self.app_state['transcription_prompt'],
@@ -939,6 +991,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             url = data['url']
             mode = data['mode']
             timestamps = data.get('timestamps', '')
+            user_question = data.get('user_question', '')
             context_before = data.get('context_before', 30)
             context_after = data.get('context_after', 60)
             
@@ -976,28 +1029,55 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             logger.info(f"📄 Video description: {video_description[:100]}..." if video_description else "📄 No video description available")
             
             quotes = []
+            analysis = ""
+            
             if mode == 'both' and timestamps:
                 logger.info("💬 Starting quote extraction...")
                 # Format the input properly for parse_input function
                 formatted_input = f"{url}\n{timestamps}"
                 _, timestamps_to_process = parse_input(formatted_input)
                 if timestamps_to_process and validate_timestamps_format(timestamps_to_process):
-                    quotes = process_timestamps(timestamps_to_process, transcript, context_after, context_before, video_description)
+                    quotes = process_timestamps(timestamps_to_process, transcript, context_after, context_before, video_description, self.app_state['gemini_model'])
                     logger.info(f"✅ Extracted {len(quotes)} quotes successfully")
                 else:
                     logger.warning("⚠️ Invalid timestamp format provided")
+            elif mode == 'analysis' and user_question:
+                logger.info("🤔 Starting analysis with user question...")
+                logger.info(f"📝 User question: {user_question}")
+                logger.info(f"📄 Transcript available: {len(transcript)} chars")
+                logger.info(f"📋 Video description available: {len(video_description)} chars")
+                
+                analysis = process_analysis(transcript, video_description, user_question, self.app_state['gemini_model'])
+                
+                logger.info(f"🔍 Analysis result type: {type(analysis)}")
+                logger.info(f"🔍 Analysis result is None: {analysis is None}")
+                logger.info(f"🔍 Analysis result is empty: {not analysis}")
+                
+                if analysis:
+                    logger.info("✅ Analysis completed successfully!")
+                    logger.info(f"📊 Analysis length: {len(analysis)} characters")
+                else:
+                    logger.warning("⚠️ Analysis failed or returned empty result")
+                    logger.warning(f"⚠️ Analysis value: {repr(analysis)}")
             
             self.app_state['quotes'] = quotes
+            self.app_state['analysis'] = analysis
             self.app_state['processing'] = False
             self.app_state['status'] = 'Completed'
             
             logger.info("🎉 Processing completed successfully!")
             
+            logger.info(f"📊 Final state - Quotes: {len(quotes)}, Analysis: {len(analysis) if analysis else 0} chars")
+            
             response_data = {
                 'transcript': transcript,
                 'quotes': quotes,
+                'analysis': analysis,
                 'video_title': video_title
             }
+            
+            logger.info(f"🔍 Response data keys: {list(response_data.keys())}")
+            logger.info(f"🔍 Analysis in response: {bool(response_data.get('analysis'))}")
             
             self.send_json_response({'success': True, 'data': response_data})
             
@@ -1013,10 +1093,15 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
             
+            logger.info(f"🔧 Updating settings with data: {data}")
+            logger.info(f"🔧 Current model before update: {self.app_state['gemini_model']}")
+            
             self.app_state['gemini_model'] = data.get('gemini_model', DEFAULT_SETTINGS['gemini_model'])
             self.app_state['transcription_prompt'] = data.get('transcription_prompt', TRANSCRIPTION_PROMPT)
             self.app_state['quote_instructions'] = data.get('quote_instructions', QUOTE_EXTRACTION_INSTRUCTIONS.copy())
             
+            logger.info(f"🔧 Model after update: {self.app_state['gemini_model']}")
+            logger.info(f"🔧 Shared state model: {self.shared_app_state['gemini_model']}")
             logger.info("⚙️ Advanced settings updated successfully")
             self.send_json_response({'success': True})
             
@@ -1030,6 +1115,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             self.app_state['status'] = 'Cleared'
             self.app_state['transcript'] = ''
             self.app_state['quotes'] = []
+            self.app_state['analysis'] = ''
             self.app_state['video_title'] = ''
             
             # Clear logs
@@ -1054,15 +1140,54 @@ def start_web_gui(port=8080):
     """Start the web GUI server"""
     try:
         with socketserver.TCPServer(("", port), YouTubeExtractorHandler) as httpd:
-            print(f"🌐 Web GUI running at http://localhost:{port}")
+            url = f"http://localhost:{port}"
+            print(f"🌐 Web GUI running at {url}")
             print("📱 Opening in your default browser...")
             
-            # Open browser after a short delay
+            # Try multiple methods to open the browser
             def open_browser():
                 time.sleep(1.5)
-                webbrowser.open(f'http://localhost:{port}')
+                browser_opened = False
+                
+                try:
+                    # Method 1: Try default browser
+                    print("🔍 Attempting to open default browser...")
+                    webbrowser.open(url)
+                    browser_opened = True
+                    print("✅ Browser opened successfully!")
+                except Exception as e:
+                    print(f"⚠️ Default browser failed: {e}")
+                
+                if not browser_opened:
+                    try:
+                        # Method 2: Try specific browsers
+                        print("🔍 Trying alternative browsers...")
+                        browsers = ['chrome', 'firefox', 'safari', 'opera']
+                        for browser_name in browsers:
+                            try:
+                                browser = webbrowser.get(browser_name)
+                                browser.open(url)
+                                print(f"✅ Opened with {browser_name}!")
+                                browser_opened = True
+                                break
+                            except:
+                                continue
+                    except Exception as e:
+                        print(f"⚠️ Alternative browsers failed: {e}")
+                
+                if not browser_opened:
+                    print("❌ Could not automatically open browser.")
+                    print(f"🔗 Please manually open: {url}")
+                    print("💡 Copy and paste this URL into your browser:")
+                    print(f"   {url}")
             
             threading.Thread(target=open_browser, daemon=True).start()
+            
+            print("=" * 60)
+            print("🚀 Server is running! Waiting for connections...")
+            print(f"🔗 Manual URL: {url}")
+            print("⌨️  Press Ctrl+C to stop the server")
+            print("=" * 60)
             
             try:
                 httpd.serve_forever()
@@ -1072,8 +1197,38 @@ def start_web_gui(port=8080):
                 
     except OSError as e:
         if e.errno == 48:  # Address already in use
-            print(f"❌ Port {port} is already in use. Try a different port.")
-            print(f"   Example: python {__file__} --port 8081")
+            print(f"❌ Port {port} is already in use.")
+            print("💡 Trying alternative ports...")
+            # Try alternative ports
+            for alt_port in [8081, 8082, 8083, 8084, 8085]:
+                try:
+                    with socketserver.TCPServer(("", alt_port), YouTubeExtractorHandler) as httpd:
+                        url = f"http://localhost:{alt_port}"
+                        print(f"✅ Found available port: {alt_port}")
+                        print(f"🌐 Web GUI running at {url}")
+                        
+                        def open_browser_alt():
+                            time.sleep(1.5)
+                            try:
+                                webbrowser.open(url)
+                                print("✅ Browser opened!")
+                            except:
+                                print(f"🔗 Please manually open: {url}")
+                        
+                        threading.Thread(target=open_browser_alt, daemon=True).start()
+                        print(f"🔗 Manual URL: {url}")
+                        print("⌨️  Press Ctrl+C to stop the server")
+                        
+                        try:
+                            httpd.serve_forever()
+                        except KeyboardInterrupt:
+                            print("\n👋 Shutting down web server...")
+                            httpd.shutdown()
+                        return
+                except OSError:
+                    continue
+            
+            print("❌ Could not find an available port. Please try later.")
         else:
             print(f"❌ Error starting server: {e}")
         sys.exit(1)

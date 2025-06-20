@@ -122,6 +122,24 @@ SUCCESS_MESSAGES = {
     "chunking_needed": "Chunking: duration > {}min or file size > {}MB. Splitting into {}min chunks with {}s overlap.",
 }
 
+# Analysis Prompt Template (for Ask Questions mode)
+ANALYSIS_PROMPT_TEMPLATE = """
+You are an expert analyst helping to extract insights from YouTube video content. 
+
+**User's Question/Request:**
+{user_question}
+
+**Video Description (for context):**
+{video_description}
+
+**Full Transcript:**
+---
+{transcript}
+---
+
+Please provide a thorough analysis addressing the user's question. Be specific, cite relevant parts of the transcript, and provide actionable insights where appropriate.
+"""
+
 def get_quote_extraction_prompt(
     instructions: list = None,
     focus_instruction: str = "",
@@ -146,4 +164,22 @@ def get_quote_extraction_prompt(
         video_description=video_desc,
         transcript_segment=transcript_segment,
         timestamp=timestamp
+    )
+
+def get_analysis_prompt(
+    user_question: str = "",
+    video_description: str = "",
+    transcript: str = ""
+) -> str:
+    """
+    Generate the complete analysis prompt for the Ask Questions mode.
+    """
+    question_text = user_question if user_question else "Please provide a general analysis of this video content."
+    video_desc = video_description if video_description else 'No description available.'
+    transcript_text = transcript if transcript else 'No transcript available.'
+    
+    return ANALYSIS_PROMPT_TEMPLATE.format(
+        user_question=question_text,
+        video_description=video_desc,
+        transcript=transcript_text
     ) 

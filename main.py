@@ -15,7 +15,8 @@ from config import (
     DEFAULT_SETTINGS, 
     USER_PROMPTS, 
     ERROR_MESSAGES, 
-    SUCCESS_MESSAGES
+    SUCCESS_MESSAGES,
+    get_analysis_prompt
 )
 
 # Set up logging
@@ -93,6 +94,60 @@ def process_youtube_url_only(youtube_url: str, progress_callback=None) -> Option
         progress_callback("Complete!")
     
     return full_transcript, transcript_filename, video_title, video_description
+
+
+def process_analysis(transcript: str, video_description: str, user_question: str, gemini_model: str = None) -> Optional[str]:
+    """Process analysis using Gemini with the full transcript and user question."""
+    try:
+        import google.generativeai as genai
+        
+        # Use provided model or fall back to default
+        model_name = gemini_model or DEFAULT_SETTINGS["gemini_model"]
+        
+        logger.info("🤔 Starting analysis with user question...")
+        logger.info(f"📝 Question: {user_question[:100]}..." if len(user_question) > 100 else f"📝 Question: {user_question}")
+        logger.info(f"📄 Transcript length: {len(transcript)} characters")
+        logger.info(f"📋 Video description length: {len(video_description)} characters")
+        logger.info(f"🤖 Using Gemini model: {model_name}")
+        
+        # Check for API key
+        api_key = os.getenv('GEMINI_API_KEY')
+        if not api_key:
+            logger.error("❌ GEMINI_API_KEY not found in environment variables")
+            return None
+        
+        # Configure Gemini with selected model
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        
+        # Generate the analysis prompt
+        analysis_prompt = get_analysis_prompt(
+            user_question=user_question,
+            video_description=video_description,
+            transcript=transcript
+        )
+        
+        logger.info(f"🔤 Generated prompt length: {len(analysis_prompt)} characters")
+        logger.info("🧠 Sending to Gemini for analysis...")
+        
+        # Call Gemini directly for analysis
+        response = model.generate_content(analysis_prompt)
+        
+        if response and response.text:
+            analysis_result = response.text.strip()
+            logger.info("✅ Analysis completed successfully!")
+            logger.info(f"📊 Analysis result length: {len(analysis_result)} characters")
+            logger.info(f"📝 Analysis preview: {analysis_result[:200]}...")
+            return analysis_result
+        else:
+            logger.error("❌ Failed to get analysis from Gemini - empty response")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ Error during analysis: {str(e)}")
+        import traceback
+        logger.error(f"🔍 Full traceback: {traceback.format_exc()}")
+        return None
 
 
 # =========================
@@ -245,7 +300,7 @@ def find_transcript_max_timestamp(full_transcript):
     return last_ts_seconds
 
 
-def process_timestamps(timestamps_to_process, full_transcript, context_after, context_before, video_description):
+def process_timestamps(timestamps_to_process, full_transcript, context_after, context_before, video_description, gemini_model=None):
     """Process all timestamps and extract quotes."""
     extracted_quotes = []
     last_ts_seconds = find_transcript_max_timestamp(full_transcript)
@@ -288,7 +343,8 @@ def process_timestamps(timestamps_to_process, full_transcript, context_after, co
                 segment,
                 ts_info.timestamp,
                 video_description,
-                ts_info.description
+                ts_info.description,
+                gemini_model
             )
         except Exception as e:
             error_msg = ERROR_MESSAGES["quote_failed"].format(ts_info.timestamp, e)

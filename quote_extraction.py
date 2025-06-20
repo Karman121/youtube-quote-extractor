@@ -20,7 +20,8 @@ def extract_quote_with_gemini(
     transcript_segment: str,
     timestamp: str,
     video_description: Optional[str],
-    user_description: Optional[str]
+    user_description: Optional[str],
+    gemini_model: str = None
 ) -> str:
     """
     Extracts a newsworthy quote from a transcript segment using Gemini.
@@ -29,8 +30,11 @@ def extract_quote_with_gemini(
     if not api_key:
         raise ValueError(ERROR_MESSAGES["gemini_api_key_missing"])
     
+    # Use provided model or fall back to default
+    model_name = gemini_model or DEFAULT_SETTINGS["gemini_model"]
+    
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(DEFAULT_SETTINGS["gemini_model"])
+    model = genai.GenerativeModel(model_name)
     
     focus_instruction = (
         f"The user is particularly interested in quotes related to: '{user_description}'"
@@ -44,7 +48,7 @@ def extract_quote_with_gemini(
         timestamp=timestamp
     )
     
-    logger.info(f"Extracting quote for timestamp {timestamp}...")
+    logger.info(f"Extracting quote for timestamp {timestamp} using model {model_name}...")
     response = model.generate_content(prompt)
     return f"[{timestamp}]\n{response.text.strip()}"
 
