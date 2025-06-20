@@ -6,6 +6,12 @@ Professional tool for extracting quotes and transcripts from YouTube videos
 
 import sys
 
+# Import runtime hook to set up bundled resources (ffmpeg, .env)
+try:
+    import runtime_hook
+except ImportError:
+    pass  # Runtime hook not available when running as script
+
 
 def main():
     print("=" * 60)
