@@ -540,7 +540,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             </div>
 
             <div class="section hidden" id="question-section">
-                <h3>4. Your Question</h3>
+                <h3>3. Your Question</h3>
                 <p style="color: #666; margin-bottom: 10px;">Ask any question about the video content:</p>
                 <textarea id="user-question" placeholder="What are the main points discussed in this video?&#10;&#10;Summarize the key insights about AI development.&#10;&#10;What does the speaker think about the future of technology?"></textarea>
             </div>
