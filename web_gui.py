@@ -19,7 +19,7 @@ from io import StringIO
 # Add the current directory to the path so we can import our modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Global log capture - Set up BEFORE importing other modules
+# Set up log capture for web UI
 log_capture_string = StringIO()
 
 # Create a custom handler that writes to both console and our string buffer
@@ -800,7 +800,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             
             document.getElementById('process-btn').disabled = true;
             document.getElementById('stop-btn').disabled = false;
-            document.getElementById('status').textContent = 'Processing...';
+            document.getElementById('status').textContent = 'Starting processing...';
             
             // Switch to logs tab automatically to show progress
             showMainTab('logs');
@@ -821,16 +821,13 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             }).then(response => response.json())
               .then(result => {
                   if (result.success) {
-                      currentResults = result.data;
-                      showResults();
-                      document.getElementById('status').textContent = 'Processing completed successfully!';
-                      // Switch back to main tab to show results
-                      showMainTab('main');
+                      // Start polling for completion
+                      startProcessingPolling();
                   } else {
                       alert('Error: ' + result.error);
                       document.getElementById('status').textContent = 'Error: ' + result.error;
+                      processingComplete();
                   }
-                  processingComplete();
               }).catch(error => {
                   alert('Error: ' + error);
                   document.getElementById('status').textContent = 'Error: ' + error;
@@ -838,7 +835,58 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
               });
         }
         
+        let processingPollingInterval;
+        
+        function startProcessingPolling() {
+            processingPollingInterval = setInterval(checkProcessingStatus, 2000); // Check every 2 seconds
+        }
+        
+        function stopProcessingPolling() {
+            if (processingPollingInterval) {
+                clearInterval(processingPollingInterval);
+                processingPollingInterval = null;
+            }
+        }
+        
+        function checkProcessingStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status').textContent = data.status;
+                    
+                    if (!data.processing) {
+                        // Processing is complete, get results
+                        stopProcessingPolling();
+                        fetch('/api/results')
+                            .then(response => response.json())
+                            .then(resultData => {
+                                currentResults = resultData;
+                                if (currentResults.transcript) {
+                                    showResults();
+                                    document.getElementById('status').textContent = 'Processing completed successfully!';
+                                    // Switch back to main tab to show results
+                                    showMainTab('main');
+                                } else {
+                                    document.getElementById('status').textContent = 'Processing failed - no results';
+                                }
+                                processingComplete();
+                            })
+                            .catch(error => {
+                                console.error('Error fetching results:', error);
+                                document.getElementById('status').textContent = 'Error fetching results';
+                                processingComplete();
+                            });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking status:', error);
+                    stopProcessingPolling();
+                    processingComplete();
+                });
+        }
+        
         function stopProcessing() {
+            stopProcessingPolling();
             fetch('/api/clear', { method: 'POST' });
             processingComplete();
             document.getElementById('status').textContent = 'Processing stopped';
@@ -847,9 +895,11 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
         function processingComplete() {
             document.getElementById('process-btn').disabled = false;
             document.getElementById('stop-btn').disabled = true;
+            stopProcessingPolling();
         }
         
         function clearAll() {
+            stopProcessingPolling();
             document.getElementById('url').value = '';
             document.getElementById('timestamps').value = '';
             document.getElementById('user-question').value = '';
@@ -999,26 +1049,50 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             log_capture_string.truncate(0)
             log_capture_string.seek(0)
             
-            # Log start of processing
-            logger.info("🚀 Starting YouTube Quote Extractor")
-            logger.info(f"📺 Processing URL: {url}")
-            logger.info(f"⚙️ Mode: {mode}")
-            
-            # Validate URL
+            # Validate URL first
             if not validate_url(url):
                 logger.error("❌ Invalid YouTube URL provided")
                 self.send_json_response({'success': False, 'error': 'Invalid YouTube URL'})
                 return
             
+            # Set processing state immediately
             self.app_state['processing'] = True
-            self.app_state['status'] = 'Processing...'
+            self.app_state['status'] = 'Starting processing...'
+            
+            # Start processing in a separate thread
+            processing_thread = threading.Thread(
+                target=self._process_in_background,
+                args=(url, mode, timestamps, user_question, context_before, context_after)
+            )
+            processing_thread.daemon = True
+            processing_thread.start()
+            
+            # Return immediately to allow log requests
+            self.send_json_response({'success': True, 'message': 'Processing started'})
+            
+        except Exception as e:
+            logger.error(f"❌ Error starting processing: {str(e)}")
+            self.app_state['processing'] = False
+            self.app_state['status'] = f'Error: {str(e)}'
+            self.send_json_response({'success': False, 'error': str(e)})
+
+    def _process_in_background(self, url, mode, timestamps, user_question, context_before, context_after):
+        """Run the actual processing in a background thread"""
+        try:
+            # Log start of processing
+            logger.info("🚀 Starting YouTube Quote Extractor")
+            logger.info(f"📺 Processing URL: {url}")
+            logger.info(f"⚙️ Mode: {mode}")
+            
+            self.app_state['status'] = 'Downloading and processing video...'
             
             # Process video
             logger.info("🎵 Downloading and processing video...")
             result = process_youtube_url_only(url)
             if not result:
                 logger.error("❌ Failed to process video")
-                self.send_json_response({'success': False, 'error': 'Failed to process video'})
+                self.app_state['processing'] = False
+                self.app_state['status'] = 'Failed to process video'
                 return
                 
             transcript, _, video_title, video_description = result
@@ -1032,6 +1106,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
             analysis = ""
             
             if mode == 'both' and timestamps:
+                self.app_state['status'] = 'Extracting quotes...'
                 logger.info("💬 Starting quote extraction...")
                 # Format the input properly for parse_input function
                 formatted_input = f"{url}\n{timestamps}"
@@ -1042,6 +1117,7 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
                 else:
                     logger.warning("⚠️ Invalid timestamp format provided")
             elif mode == 'analysis' and user_question:
+                self.app_state['status'] = 'Analyzing content...'
                 logger.info("🤔 Starting analysis with user question...")
                 logger.info(f"📝 User question: {user_question}")
                 logger.info(f"📄 Transcript available: {len(transcript)} chars")
@@ -1049,43 +1125,25 @@ class YouTubeExtractorHandler(http.server.SimpleHTTPRequestHandler):
                 
                 analysis = process_analysis(transcript, video_description, user_question, self.app_state['gemini_model'])
                 
-                logger.info(f"🔍 Analysis result type: {type(analysis)}")
-                logger.info(f"🔍 Analysis result is None: {analysis is None}")
-                logger.info(f"🔍 Analysis result is empty: {not analysis}")
-                
                 if analysis:
                     logger.info("✅ Analysis completed successfully!")
                     logger.info(f"📊 Analysis length: {len(analysis)} characters")
                 else:
                     logger.warning("⚠️ Analysis failed or returned empty result")
-                    logger.warning(f"⚠️ Analysis value: {repr(analysis)}")
             
+            # Update final state
             self.app_state['quotes'] = quotes
             self.app_state['analysis'] = analysis
             self.app_state['processing'] = False
             self.app_state['status'] = 'Completed'
             
             logger.info("🎉 Processing completed successfully!")
-            
             logger.info(f"📊 Final state - Quotes: {len(quotes)}, Analysis: {len(analysis) if analysis else 0} chars")
             
-            response_data = {
-                'transcript': transcript,
-                'quotes': quotes,
-                'analysis': analysis,
-                'video_title': video_title
-            }
-            
-            logger.info(f"🔍 Response data keys: {list(response_data.keys())}")
-            logger.info(f"🔍 Analysis in response: {bool(response_data.get('analysis'))}")
-            
-            self.send_json_response({'success': True, 'data': response_data})
-            
         except Exception as e:
-            logger.error(f"❌ Error processing request: {str(e)}")
+            logger.error(f"❌ Error during background processing: {str(e)}")
             self.app_state['processing'] = False
             self.app_state['status'] = f'Error: {str(e)}'
-            self.send_json_response({'success': False, 'error': str(e)})
 
     def handle_update_settings(self):
         try:
