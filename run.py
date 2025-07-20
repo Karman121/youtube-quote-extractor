@@ -8,7 +8,7 @@ import sys
 
 # Import runtime hook to set up bundled resources (ffmpeg, .env)
 try:
-    import runtime_hook
+    import runtime_hook  # noqa: F401
 except ImportError:
     pass  # Runtime hook not available when running as script
 
@@ -32,7 +32,7 @@ def main():
         print("Please ensure all dependencies are installed.")
         print("Run: pip install -r requirements.txt")
         input("Press Enter to exit...")
-    except KeyboardInterrupt:
+    except KeyboardInterrupt: 
         print("\n\n👋 Goodbye!")
         sys.exit(0)
     except Exception as e:

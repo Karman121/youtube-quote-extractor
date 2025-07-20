@@ -13,13 +13,13 @@ env_file = current_dir / ".env"
 # Collect data files
 datas = []
 
-# .env file should be external - not bundled
-# Users need to place their .env file in the same folder as the executable
+# Bundle .env file within the executable for easier distribution
 if env_file.exists():
-    print(f"ℹ️  Found .env file: {env_file}")
-    print("📝 Note: .env file will NOT be bundled - it must be placed next to the executable")
+    datas.append((str(env_file), '.'))
+    print(f"✅ Found .env file: {env_file}")
+    print("📦 .env file will be bundled within the executable")
 else:
-    print("⚠️  No .env file found. You'll need to create one next to the executable with your GEMINI_API_KEY")
+    print("⚠️  No .env file found. Please create one with your GEMINI_API_KEY before building")
 
 # Add ffmpeg executables if they exist
 ffmpeg_exe = ffmpeg_dir / "ffmpeg.exe"

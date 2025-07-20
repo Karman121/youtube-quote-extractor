@@ -1,3 +1,99 @@
+# Environment files
 .env
 Mac - .env bundled
 Windows - .env bundled
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Audio files
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.aac
+
+# Video files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Transcript and analysis files
+*_transcript*.txt
+*_analysis*.txt
+*_captions*.txt
+tmp*.txt
+*.vtt
+
+# Other generated files
+*.json
+*.log
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Demo files
+demo_*
+demos.*
+
+# Distribution archives
+*.zip
+*.tar.gz
+*.rar
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/

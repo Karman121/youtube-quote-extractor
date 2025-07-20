@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def setup_bundled_resources():
-    """Set up bundled resources (ffmpeg) and external .env when running as executable"""
+    """Set up bundled resources (ffmpeg) and .env when running as executable"""
     
     # Determine if we're running as a PyInstaller bundle
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
@@ -30,24 +30,44 @@ def setup_bundled_resources():
             if ffmpeg_exe.exists():
                 os.environ['FFMPEG_LOCATION'] = str(ffmpeg_exe)
         
-        # Load .env file from executable directory (external file)
-        env_file = executable_dir / '.env'
-        if env_file.exists():
-            # Load environment variables from external .env file
+        # Load .env file - try bundled first, then external
+        bundled_env = bundle_dir / '.env'
+        external_env = executable_dir / '.env'
+        
+        env_loaded = False
+        
+        # Try bundled .env file first
+        if bundled_env.exists():
             try:
-                with open(env_file, 'r') as f:
+                with open(bundled_env, 'r') as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith('#') and '=' in line:
                             key, value = line.split('=', 1)
                             os.environ[key.strip()] = value.strip()
-                print(f"✅ Loaded .env file from: {env_file}")
+                print(f"✅ Loaded bundled .env file from: {bundled_env}")
+                env_loaded = True
             except Exception as e:
-                print(f"❌ Warning: Could not load .env file from {env_file}: {e}")
-                print("📝 Make sure your .env file is in the same folder as the executable")
-        else:
-            print(f"⚠️  No .env file found in executable directory: {executable_dir}")
-            print("📝 Create a .env file with GEMINI_API_KEY=your_api_key in the same folder as the executable")
+                print(f"❌ Warning: Could not load bundled .env file: {e}")
+        
+        # Fallback to external .env file if bundled doesn't exist or failed
+        if not env_loaded and external_env.exists():
+            try:
+                with open(external_env, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            os.environ[key.strip()] = value.strip()
+                print(f"✅ Loaded external .env file from: {external_env}")
+                env_loaded = True
+            except Exception as e:
+                print(f"❌ Warning: Could not load external .env file: {e}")
+        
+        if not env_loaded:
+            print("⚠️  No .env file found (checked bundled and external locations)")
+            print("📝 Either bundle .env during build or create external .env "
+                  "with GEMINI_API_KEY=your_api_key")
     
     else:
         # Running as script - normal behavior

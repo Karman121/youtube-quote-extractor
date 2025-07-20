@@ -5,11 +5,11 @@ Contains default settings, prompts, and configuration parameters.
 
 # Default Settings
 DEFAULT_SETTINGS = {
-    # Audio processing
-    "chunk_length_minutes": 30,
+    # Audio processing - Smaller chunks to prevent token limit issues
+    "chunk_length_minutes": 45,
     "overlap_seconds": 30,
-    "max_file_size_mb": 100,
-    "max_duration_minutes": 50,
+    "max_file_size_mb": 95,
+    "max_duration_minutes": 45,
     
     # Context windows
     "default_context_after_seconds": 90,
@@ -20,6 +20,7 @@ DEFAULT_SETTINGS = {
     "retry_attempts": 3,
     "rate_limit_calls": 1.8,
     "rate_limit_period": 1,
+    "max_output_tokens": 8192,
     
     # File settings
     "audio_quality": "192",

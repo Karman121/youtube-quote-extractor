@@ -117,15 +117,21 @@ def get_transcript_segment(
     is_last_timestamp = (current_timestamp_index == len(all_timestamps) - 1)
     if is_last_timestamp:
         context_after_sec = manual_context_limit_sec
-        logger.info(f"Last timestamp. Using manual context limit of {context_after_sec}s.")
+        logger.info(
+            f"Last timestamp. Using manual context limit of "
+            f"{context_after_sec}s."
+        )
     else:
         next_ts_info = all_timestamps[current_timestamp_index + 1]
-        next_timestamp_seconds = parse_timestamp_to_seconds(next_ts_info.timestamp)
+        next_timestamp_seconds = parse_timestamp_to_seconds(
+            next_ts_info.timestamp
+        )
         duration_to_next_ts = next_timestamp_seconds - target_seconds
         context_after_sec = min(duration_to_next_ts, manual_context_limit_sec)
         logger.info(
             f"Next timestamp is at {next_ts_info.timestamp} "
-            f"({duration_to_next_ts}s away). Using context of {context_after_sec}s."
+            f"({duration_to_next_ts}s away). Using context of "
+            f"{context_after_sec}s."
         )
     start_time = max(0, target_seconds - context_before_sec)
     end_time = target_seconds + context_after_sec
@@ -140,7 +146,8 @@ def get_transcript_segment(
     segment = '\n'.join(segment_lines)
     if not segment:
         logger.warning(
-            f"Could not find transcript segment for timestamp {current_ts_info.timestamp}."
+            f"Could not find transcript segment for timestamp "
+            f"{current_ts_info.timestamp}."
         )
     return segment
 
@@ -181,22 +188,32 @@ def transcribe_audio(audio_path: str, transcript_filename: str) -> str:
     if not api_key:
         print(f"[ERROR] {ERROR_MESSAGES['gemini_api_key_missing']}")
         raise ValueError(ERROR_MESSAGES["gemini_api_key_missing"])
+    
+    # Configure Gemini with timeout
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(DEFAULT_SETTINGS["gemini_model"])
+    
     if not os.path.exists(audio_path):
         print(f"[ERROR] {ERROR_MESSAGES['audio_file_not_found'].format(audio_path)}")
         raise FileNotFoundError(ERROR_MESSAGES["audio_file_not_found"].format(audio_path))
+    
     try:
         with open(audio_path, 'rb') as audio_file:
             audio_data = audio_file.read()
     except Exception as e:
         print(f"[ERROR] Failed to read audio file: {e}")
         raise
+    
     if not audio_data:
         print(f"[ERROR] {ERROR_MESSAGES['audio_file_empty']}")
         raise ValueError(ERROR_MESSAGES["audio_file_empty"])
+    
+    # Log audio file info for debugging
+    logger.info(f"Audio file size for transcription: {len(audio_data)} bytes")
+    
     try:
         audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        logger.info(f"Base64 encoded size: {len(audio_base64)} characters")
     except Exception as e:
         print(f"[ERROR] Failed to encode audio file: {e}")
         raise
@@ -210,24 +227,134 @@ def transcribe_audio(audio_path: str, transcript_filename: str) -> str:
             }
         }
     ]
+    
     logger.info("Sending transcription request to Gemini API...")
+    logger.info(f"Using model: {DEFAULT_SETTINGS['gemini_model']}")
+    logger.info(f"Prompt length: {len(TRANSCRIPTION_PROMPT)} characters")
+    
     try:
-        response = model.generate_content(content_parts)
+        # Add request configuration with increased token limit
+        response = model.generate_content(
+            content_parts,
+            generation_config=genai.types.GenerationConfig(
+                candidate_count=1,
+                max_output_tokens=DEFAULT_SETTINGS["max_output_tokens"],
+            )
+        )
+        logger.info("Received response from Gemini API")
+        
+        # Debug response object
+        logger.info(f"Response object type: {type(response)}")
+        logger.info(f"Response has text attribute: {hasattr(response, 'text')}")
+        
+        if hasattr(response, 'candidates') and response.candidates:
+            logger.info(f"Number of candidates: {len(response.candidates)}")
+            for i, candidate in enumerate(response.candidates):
+                logger.info(f"Candidate {i} finish_reason: {getattr(candidate, 'finish_reason', 'unknown')}")
+        
     except Exception as e:
-        print(f"[ERROR] {ERROR_MESSAGES['gemini_api_failed'].format(e)}")
+        error_msg = f"Failed to get response from Gemini API: {e}"
+        print(f"[ERROR] {error_msg}")
+        logger.error(error_msg)
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise
-    if not response or not response.text:
-        print(f"[ERROR] {ERROR_MESSAGES['gemini_response_empty']}")
+    
+    # Enhanced response validation
+    if not response:
+        error_msg = "Gemini API returned None response"
+        print(f"[ERROR] {error_msg}")
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+    
+    # Check finish reason first to provide better error messages
+    if hasattr(response, 'candidates') and response.candidates:
+        candidate = response.candidates[0]
+        finish_reason = getattr(candidate, 'finish_reason', None)
+        
+        if finish_reason == 2:  # MAX_TOKENS - response was truncated
+            logger.warning("Response was truncated due to token limit")
+            # Try to extract partial content if available
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    partial_text = ""
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            partial_text += part.text
+                    
+                    if partial_text.strip():
+                        logger.info(f"Extracted partial transcript: {len(partial_text)} characters")
+                        transcript_text = partial_text.strip()
+                        
+                        # Save partial transcript with warning
+                        try:
+                            with open(transcript_filename, 'w', encoding='utf-8') as f:
+                                f.write(f"# WARNING: This transcript was truncated due to length limits\n")
+                                f.write(f"# Partial transcript ({len(transcript_text)} characters)\n\n")
+                                f.write(transcript_text)
+                            logger.info(f"Partial transcript saved to {transcript_filename}")
+                        except Exception as e:
+                            print(f"[ERROR] Failed to save partial transcript: {e}")
+                            raise
+                        
+                        return transcript_text
+            
+            # If we can't extract partial content, raise error
+            error_msg = "Response truncated due to token limit and no partial content available"
+            print(f"[ERROR] {error_msg}")
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        elif finish_reason == 3:  # SAFETY
+            error_msg = "Response blocked by safety filters"
+            print(f"[ERROR] {error_msg}")
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        elif finish_reason == 4:  # RECITATION
+            error_msg = "Response blocked due to recitation concerns"
+            print(f"[ERROR] {error_msg}")
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+    
+    # Original text validation
+    if not hasattr(response, 'text'):
+        error_msg = "Gemini API response missing text attribute"
+        print(f"[ERROR] {error_msg}")
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+    
+    if not response.text:
+        error_msg = "Empty response from Gemini API"
+        print(f"[ERROR] {error_msg}")
+        logger.error(error_msg)
+        
+        # Log additional debugging info
+        if hasattr(response, 'candidates') and response.candidates:
+            for i, candidate in enumerate(response.candidates):
+                finish_reason = getattr(candidate, 'finish_reason', 'unknown')
+                logger.error(f"Candidate {i} finish_reason: {finish_reason}")
+                if hasattr(candidate, 'safety_ratings'):
+                    logger.error(f"Candidate {i} safety_ratings: {candidate.safety_ratings}")
+        
         raise ValueError(ERROR_MESSAGES["gemini_response_empty"])
+    
+    # Log successful response info
+    transcript_text = response.text.strip()
     logger.info("Successfully received transcript from Gemini API.")
+    logger.info(f"Transcript length: {len(transcript_text)} characters")
+    logger.info(f"Transcript preview: {transcript_text[:200]}...")
+    
     try:
         with open(transcript_filename, 'w', encoding='utf-8') as f:
-            f.write(response.text)
+            f.write(transcript_text)
+        logger.info(f"Transcript saved to {transcript_filename}")
     except Exception as e:
         print(f"[ERROR] Failed to save transcript to file: {e}")
         raise
-    logger.info(f"Transcript saved to {transcript_filename}")
-    return response.text
+    
+    return transcript_text
 
 
 @retry(stop=stop_after_attempt(DEFAULT_SETTINGS["retry_attempts"]), 
@@ -259,9 +386,36 @@ def transcribe_audio_with_chunking(audio_path: str, transcript_filename: str) ->
     for idx, (chunk_path, start_sec) in enumerate(chunks):
         chunk_transcript_file = transcript_filename.replace('.txt', f'_chunk{idx+1}.txt')
         logger.info(f"Transcribing chunk {idx+1}/{len(chunks)}: {chunk_path} (offset {start_sec}s)")
-        chunk_transcript = transcribe_audio(chunk_path, chunk_transcript_file)
-        chunk_transcript = adjust_transcript_timestamps(chunk_transcript, start_sec)
-        transcripts.append(chunk_transcript)
+        
+        try:
+            chunk_transcript = transcribe_audio(chunk_path, chunk_transcript_file)
+            
+            if not chunk_transcript or not chunk_transcript.strip():
+                error_msg = f"Empty transcript returned for chunk {idx+1}"
+                logger.error(error_msg)
+                print(f"[ERROR] {error_msg}")
+                continue
+            
+            logger.info(f"Successfully transcribed chunk {idx+1}: {len(chunk_transcript)} characters")
+            chunk_transcript = adjust_transcript_timestamps(chunk_transcript, start_sec)
+            transcripts.append(chunk_transcript)
+            
+        except Exception as e:
+            error_msg = f"Failed to transcribe chunk {idx+1}/{len(chunks)}: {e}"
+            logger.error(error_msg)
+            print(f"[ERROR] {error_msg}")
+            import traceback
+            logger.error(f"Full traceback for chunk {idx+1}: {traceback.format_exc()}")
+            # Continue with other chunks instead of failing completely
+            continue
+    
+    if not transcripts:
+        error_msg = "All transcription chunks failed. No transcript available."
+        logger.error(error_msg)
+        print(f"[ERROR] {error_msg}")
+        raise ValueError(error_msg)
+    
+    logger.info(f"Successfully transcribed {len(transcripts)}/{len(chunks)} chunks")
     
     stitched = []
     prev_lines = set()
@@ -272,7 +426,15 @@ def transcribe_audio_with_chunking(audio_path: str, transcript_filename: str) ->
         prev_lines.update(new_lines)
     
     full_transcript = '\n'.join(stitched)
+    
+    if not full_transcript.strip():
+        error_msg = "Final stitched transcript is empty"
+        logger.error(error_msg)
+        print(f"[ERROR] {error_msg}")
+        raise ValueError(error_msg)
+    
     with open(transcript_filename, 'w', encoding='utf-8') as f:
         f.write(full_transcript)
     logger.info(f"Stitched transcript saved to {transcript_filename}")
+    logger.info(f"Final transcript length: {len(full_transcript)} characters")
     return full_transcript
