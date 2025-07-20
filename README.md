@@ -55,7 +55,7 @@ ratelimit>=2.2.1
 ### Option 1: Download Pre-built Executables (Recommended)
 
 **For Windows:**
--   Download: Use this link: https://github.com/Karman121/youtube-quote-extractor/releases/download/v1.0.0/Youtube.Quote.Extractor.-.Windows.zip
+-   Download: https://github.com/Karman121/youtube-quote-extractor/releases/download/v1.0.0/Youtube.Quote.Extractor.-.Windows.zip
 -   Extract the zip file.
 -   Place your `.env` file next to the executable (see Configuration section).
 -   Double-click `YouTube Quote Extractor.exe` to run.
