@@ -9,12 +9,10 @@ import google.generativeai as genai
 from tenacity import retry, stop_after_attempt, wait_exponential
 from dotenv import load_dotenv
 from audio_utils import get_audio_file_info
-from utils import sanitize_filename, format_timestamp
 from config import (
     DEFAULT_SETTINGS, 
     TRANSCRIPTION_PROMPT, 
     ERROR_MESSAGES, 
-    SUCCESS_MESSAGES
 )
 
 
