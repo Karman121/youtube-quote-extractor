@@ -20,7 +20,7 @@ DEFAULT_SETTINGS = {
     "retry_attempts": 3,
     "rate_limit_calls": 1.8,
     "rate_limit_period": 1,
-    "max_output_tokens": 8192,
+    "max_output_tokens": 65536,  # Increased for longer transcripts
     
     # File settings
     "audio_quality": "192",

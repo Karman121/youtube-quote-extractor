@@ -359,82 +359,198 @@ def transcribe_audio(audio_path: str, transcript_filename: str) -> str:
 
 @retry(stop=stop_after_attempt(DEFAULT_SETTINGS["retry_attempts"]), 
        wait=wait_exponential(multiplier=1, min=4, max=10))
-def transcribe_audio_with_chunking(audio_path: str, transcript_filename: str) -> str:
+def transcribe_audio_with_dynamic_chunking(audio_path: str, transcript_filename: str) -> str:
+    """
+    Transcribe audio with automatic chunking when hitting token limits.
+    Will recursively split chunks smaller if token limits are exceeded.
+    """
+    logger.info(f"Attempting transcription with dynamic chunking: {audio_path}")
+    
+    try:
+        # Try direct transcription first
+        transcript = transcribe_audio(audio_path, transcript_filename)
+        
+        # Check if we got a complete transcript (no truncation warnings)
+        if "WARNING: This transcript was truncated" in transcript:
+            logger.warning("Token limit exceeded, attempting to split into smaller chunks")
+            return transcribe_with_progressive_chunking(audio_path, transcript_filename)
+        
+        logger.info(f"Successfully transcribed without chunking: {len(transcript)} characters")
+        return transcript
+        
+    except ValueError as e:
+        if "token limit" in str(e).lower() or "truncated" in str(e).lower():
+            logger.warning("Token limit exceeded on initial attempt, splitting into chunks")
+            return transcribe_with_progressive_chunking(audio_path, transcript_filename)
+        else:
+            # Re-raise non-token-limit errors
+            raise
+
+
+def transcribe_with_progressive_chunking(audio_path: str, transcript_filename: str, 
+                                       chunk_size_min: float = None) -> str:
+    """
+    Progressively split audio into smaller chunks until transcription succeeds.
+    """
+    from audio_utils import split_audio_chunks, get_audio_file_info
+    
+    if chunk_size_min is None:
+        # Start with configured chunk size
+        chunk_size_min = DEFAULT_SETTINGS["chunk_length_minutes"]
+    
+    # Get file duration to check minimum viable chunk size
     file_size_MB, duration_min = get_audio_file_info(audio_path)
-    logger.info(f"Audio file size: {file_size_MB:.2f} MB, duration: {duration_min:.2f} min")
-    chunking = False
-    chunks = []
     
-    max_duration = DEFAULT_SETTINGS["max_duration_minutes"]
-    max_size = DEFAULT_SETTINGS["max_file_size_mb"]
-    chunk_length = DEFAULT_SETTINGS["chunk_length_minutes"]
-    overlap = DEFAULT_SETTINGS["overlap_seconds"]
+    # Don't go below 2-minute chunks (or file duration if shorter)
+    min_chunk_size = min(2.0, duration_min / 4)  # At most 4 chunks for very short files
     
-    if duration_min > max_duration or file_size_MB > max_size:
-        logger.info(SUCCESS_MESSAGES["chunking_needed"].format(
-            max_duration, max_size, chunk_length, overlap))
-        from audio_utils import split_audio_chunks
-        chunks = split_audio_chunks(audio_path, chunk_length_min=chunk_length, overlap_sec=overlap)
-        chunking = True
-    else:
-        logger.info(SUCCESS_MESSAGES["no_chunking"])
+    logger.info(f"Attempting progressive chunking with {chunk_size_min:.1f}min chunks")
     
-    if not chunking:
-        return transcribe_audio(audio_path, transcript_filename)
+    if chunk_size_min < min_chunk_size:
+        logger.error(f"Cannot split further: chunk size {chunk_size_min:.1f}min below minimum {min_chunk_size:.1f}min")
+        # Try transcription anyway and return partial result
+        try:
+            partial_transcript = transcribe_audio(audio_path, transcript_filename)
+            logger.warning("Returning partial transcript - cannot split audio further")
+            return partial_transcript
+        except Exception as e:
+            logger.error(f"Even partial transcription failed: {e}")
+            raise ValueError("Audio too dense for available token limits")
     
+    # Split into chunks using the existing function
+    chunks = split_audio_chunks(audio_path, chunk_length_min=chunk_size_min, overlap_sec=15)
+    
+    if len(chunks) <= 1:
+        # Cannot split further with current parameters
+        logger.warning("Cannot create multiple chunks, attempting single chunk transcription")
+        try:
+            return transcribe_audio(audio_path, transcript_filename)
+        except:
+            raise ValueError("Cannot split audio into smaller chunks")
+    
+    logger.info(f"Split into {len(chunks)} chunks of ~{chunk_size_min:.1f} minutes each")
+    
+    # Process each chunk with potential recursive splitting
     transcripts = []
+    failed_chunks = []
+    
     for idx, (chunk_path, start_sec) in enumerate(chunks):
-        chunk_transcript_file = transcript_filename.replace('.txt', f'_chunk{idx+1}.txt')
-        logger.info(f"Transcribing chunk {idx+1}/{len(chunks)}: {chunk_path} (offset {start_sec}s)")
+        chunk_transcript_file = transcript_filename.replace('.txt', f'_progchunk{idx+1}.txt')
+        logger.info(f"Processing progressive chunk {idx+1}/{len(chunks)}: offset {start_sec}s")
         
         try:
+            # Try to transcribe this chunk
             chunk_transcript = transcribe_audio(chunk_path, chunk_transcript_file)
             
-            if not chunk_transcript or not chunk_transcript.strip():
-                error_msg = f"Empty transcript returned for chunk {idx+1}"
-                logger.error(error_msg)
-                print(f"[ERROR] {error_msg}")
-                continue
+            # Check if this chunk was also truncated
+            if "WARNING: This transcript was truncated" in chunk_transcript:
+                logger.warning(f"Chunk {idx+1} was truncated, trying smaller chunks")
+                # Recursively split this chunk further
+                sub_transcript = transcribe_with_progressive_chunking(
+                    chunk_path, chunk_transcript_file, chunk_size_min / 2
+                )
+                chunk_transcript = sub_transcript
             
-            logger.info(f"Successfully transcribed chunk {idx+1}: {len(chunk_transcript)} characters")
-            chunk_transcript = adjust_transcript_timestamps(chunk_transcript, start_sec)
-            transcripts.append(chunk_transcript)
-            
+            if chunk_transcript and chunk_transcript.strip():
+                # Adjust timestamps for this chunk's offset
+                adjusted_transcript = adjust_transcript_timestamps(chunk_transcript, start_sec)
+                transcripts.append(adjusted_transcript)
+                logger.info(f"Successfully processed chunk {idx+1}: {len(chunk_transcript)} chars")
+            else:
+                logger.warning(f"Empty transcript from chunk {idx+1}")
+                failed_chunks.append(idx+1)
+                
         except Exception as e:
-            error_msg = f"Failed to transcribe chunk {idx+1}/{len(chunks)}: {e}"
-            logger.error(error_msg)
-            print(f"[ERROR] {error_msg}")
-            import traceback
-            logger.error(f"Full traceback for chunk {idx+1}: {traceback.format_exc()}")
-            # Continue with other chunks instead of failing completely
+            logger.error(f"Failed to process chunk {idx+1}: {e}")
+            failed_chunks.append(idx+1)
             continue
     
     if not transcripts:
-        error_msg = "All transcription chunks failed. No transcript available."
-        logger.error(error_msg)
-        print(f"[ERROR] {error_msg}")
-        raise ValueError(error_msg)
+        raise ValueError("All progressive chunks failed to transcribe")
     
-    logger.info(f"Successfully transcribed {len(transcripts)}/{len(chunks)} chunks")
+    if failed_chunks:
+        logger.warning(f"Failed to process chunks: {failed_chunks}")
     
-    stitched = []
-    prev_lines = set()
-    for t in transcripts:
-        lines = t.strip().split('\n')
-        new_lines = [line for line in lines if line not in prev_lines]
-        stitched.extend(new_lines)
-        prev_lines.update(new_lines)
+    logger.info(f"Successfully processed {len(transcripts)}/{len(chunks)} chunks")
     
-    full_transcript = '\n'.join(stitched)
+    # Combine transcripts with deduplication
+    return combine_transcripts_with_deduplication(transcripts, transcript_filename)
+
+
+def combine_transcripts_with_deduplication(transcripts: list, output_filename: str) -> str:
+    """
+    Combine multiple transcript chunks with intelligent deduplication.
+    """
+    if not transcripts:
+        return ""
     
-    if not full_transcript.strip():
-        error_msg = "Final stitched transcript is empty"
-        logger.error(error_msg)
-        print(f"[ERROR] {error_msg}")
-        raise ValueError(error_msg)
+    if len(transcripts) == 1:
+        result = transcripts[0]
+    else:
+        # Combine with overlap deduplication
+        combined_lines = []
+        seen_content = set()
+        
+        for transcript in transcripts:
+            lines = transcript.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Skip warning headers
+                if line.startswith('#'):
+                    continue
+                
+                # Extract content without timestamp for deduplication
+                if ']' in line and line.startswith('['):
+                    content = line.split(']', 1)[1].strip()
+                else:
+                    content = line
+                
+                # Use first 30 characters of content as deduplication key
+                content_key = content[:30] if len(content) > 30 else content
+                
+                if content_key not in seen_content:
+                    combined_lines.append(line)
+                    seen_content.add(content_key)
+                else:
+                    logger.debug(f"Skipping duplicate: {content_key}...")
+        
+        result = '\n'.join(combined_lines)
     
-    with open(transcript_filename, 'w', encoding='utf-8') as f:
-        f.write(full_transcript)
-    logger.info(f"Stitched transcript saved to {transcript_filename}")
-    logger.info(f"Final transcript length: {len(full_transcript)} characters")
-    return full_transcript
+    # Save combined result
+    try:
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            f.write(result)
+        logger.info(f"Combined transcript saved to {output_filename}")
+        logger.info(f"Final transcript length: {len(result)} characters")
+    except Exception as e:
+        logger.error(f"Failed to save combined transcript: {e}")
+    
+    return result
+
+
+@retry(stop=stop_after_attempt(DEFAULT_SETTINGS["retry_attempts"]), 
+       wait=wait_exponential(multiplier=1, min=4, max=10))
+def transcribe_audio_with_chunking(audio_path: str, transcript_filename: str) -> str:
+    """
+    Main transcription function with intelligent chunking and dynamic splitting.
+    """
+    file_size_MB, duration_min = get_audio_file_info(audio_path)
+    logger.info(f"Audio file size: {file_size_MB:.2f} MB, duration: {duration_min:.2f} min")
+    
+    max_duration = DEFAULT_SETTINGS["max_duration_minutes"]
+    max_size = DEFAULT_SETTINGS["max_file_size_mb"]
+    
+    # Check if chunking is needed based on size/duration thresholds
+    if duration_min <= max_duration and file_size_MB <= max_size:
+        logger.info("File within limits, attempting transcription with dynamic chunking")
+        return transcribe_audio_with_dynamic_chunking(audio_path, transcript_filename)
+    
+    # File is large, use progressive chunking approach
+    logger.info(f"File exceeds limits (>{max_duration}min or >{max_size}MB)")
+    logger.info("Using progressive chunking approach")
+    
+    return transcribe_with_progressive_chunking(audio_path, transcript_filename)
