@@ -7,8 +7,9 @@ import re
 from typing import List, Optional
 from transcript_utils import (
     parse_input, parse_timestamp_to_seconds, get_transcript_segment,
-    transcribe_audio_with_chunking, TimestampInfo, sanitize_filename
+    transcribe_audio_with_chunking, TimestampInfo
 )
+from utils import sanitize_filename
 from audio_utils import download_audio
 from quote_extraction import extract_quote_with_gemini
 from config import (
